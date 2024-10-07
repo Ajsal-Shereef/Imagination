@@ -24,8 +24,8 @@ def visualize_latent_space(model, dataloader, device, all_z=[], method='pca', sa
         all_labels = []
         with torch.no_grad():
             for sentences in tqdm(dataloader, desc="Collecting Latent Vectors"):
-                # sentences = list(sentences)
-                sentences = sentences.float().to(device)
+                sentences = list(sentences)
+                # sentences = sentences.float().to(device)
                 z, _, _ = model.reparameterize(*model.encode(sentences))
                 all_z.append(z.cpu().numpy())
                 # Optionally, collect labels or other metadata if available

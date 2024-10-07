@@ -26,7 +26,7 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     learn_mu_p = False  # Enable learnable prior means
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     vae = VAE(
-        input_dim=79,
+        pretrained_model_name="all-MiniLM-L6-v2",
         latent_dim=latent_dim,
         num_mixtures=2,
         mu_p=mu_p,
@@ -41,6 +41,6 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     latent = visualize_latent_space(vae, dataloader, device, latent, method='tsne', save_path=f'{data_dir}/latent_space_tsne_{vae_checkpoint.split("/")[-1]}.png')
     
 if __name__ == "__main__":
-    test_vae("models/all-MiniLM-L6-v2/vae_epoch_1400.pth", "all-MiniLM-L6-v2", "data/captions.pkl")
+    test_vae("models/all-MiniLM-L6-v2/vae_epoch_600.pth", "all-MiniLM-L6-v2", "data/captions.pkl")
     
     
