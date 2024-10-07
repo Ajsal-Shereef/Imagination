@@ -9,7 +9,7 @@ from sentence_transformers import SentenceTransformer
 # =============================
 
 class VAE(nn.Module):
-    def __init__(self, input_dim, latent_dim=128, num_mixtures=5, mu_p=None, learn_mu_p=False):
+    def __init__(self, pretrained_model_name, latent_dim=128, num_mixtures=5, mu_p=None, learn_mu_p=False):
         """
         Variational Autoencoder with a pretrained Sentence-BERT encoder, a mixture of Gaussians in the latent space,
         and a decoder to reconstruct Sentence-BERT embeddings.
@@ -26,33 +26,33 @@ class VAE(nn.Module):
         self.latent_dim = latent_dim
         self.num_mixtures = num_mixtures
 
-        # # Encoder: Pretrained Sentence-BERT with fixed weights
-        # self.encoder = SentenceTransformer(pretrained_model_name)
-        # for param in self.encoder.parameters():
-        #     param.requires_grad = False  # Freeze encoder weights
+        # Encoder: Pretrained Sentence-BERT with fixed weights
+        self.encoder = SentenceTransformer(pretrained_model_name)
+        for param in self.encoder.parameters():
+            param.requires_grad = False  # Freeze encoder weights
         self.embedding_dim = latent_dim
         
         #Encoder model
         # Define the encoder model with multiple layers
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 64),  # First hidden layer
-            nn.ReLU(),
-            # nn.Dropout(0.2),
-            nn.Linear(64, 64),        # Second hidden layer
-            nn.ReLU(),
-            nn.Linear(64, 128),        # Second hidden layer
-            nn.ReLU(),
-            nn.Linear(128, 128),        # Second hidden layer
-            nn.ReLU(),
-            # nn.Dropout(0.2),
-            nn.Linear(128, 256),        # Second hidden layer
-            nn.ReLU(),
-            nn.Linear(256, 256),        # Third hidden layer
-            nn.ReLU(),
-            # nn.Dropout(0.2),
-            nn.Linear(256, self.embedding_dim),        # Third hidden layer
-            nn.ReLU()
-        )
+        # self.encoder = nn.Sequential(
+        #     nn.Linear(input_dim, 64),  # First hidden layer
+        #     nn.ReLU(),
+        #     # nn.Dropout(0.2),
+        #     nn.Linear(64, 64),        # Second hidden layer
+        #     nn.ReLU(),
+        #     nn.Linear(64, 128),        # Second hidden layer
+        #     nn.ReLU(),
+        #     nn.Linear(128, 128),        # Second hidden layer
+        #     nn.ReLU(),
+        #     # nn.Dropout(0.2),
+        #     nn.Linear(128, 256),        # Second hidden layer
+        #     nn.ReLU(),
+        #     nn.Linear(256, 256),        # Third hidden layer
+        #     nn.ReLU(),
+        #     # nn.Dropout(0.2),
+        #     nn.Linear(256, self.embedding_dim),        # Third hidden layer
+        #     nn.ReLU()
+        # )
 
         # Linear layers to output mixture parameters
         self.fc_mu = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
@@ -75,7 +75,7 @@ class VAE(nn.Module):
             # nn.Dropout(0.2),
             nn.Linear(64, 64),
             nn.ReLU(),
-            nn.Linear(64, input_dim)
+            nn.Linear(64, self.embedding_dim)
         )
         
         # Apply Xavier initialization to both models
@@ -116,8 +116,8 @@ class VAE(nn.Module):
             weights (torch.Tensor): Mixture weights. Shape: [batch_size, num_mixtures]
         """
         # Get Sentence-BERT embeddings
-        #embeddings = self.encoder.encode(x, convert_to_tensor=True, device=self.fc_mu.weight.device)
-        embeddings = self.encoder(x)
+        embeddings = self.encoder.encode(x, convert_to_tensor=True, device=self.fc_mu.weight.device)
+        # embeddings = self.encoder(x)
         # embeddings: [batch_size, embedding_dim]
 
         # Compute mixture parameters
@@ -205,11 +205,11 @@ class VAE(nn.Module):
             mu_p = mu_p.unsqueeze(0)  # [1, num_mixtures, latent_dim]
         else:
             mu_p = self.mu_p_buffer.unsqueeze(0)  # [1, num_mixtures, latent_dim]
-
+            
         # Compute KL divergence for each component and each latent dimension
         # KL(N(mu_i, sigma_i^2) || N(mu_p_i, I)) = 0.5 * (sigma_i^2 + (mu_p_i - mu_i)^2 - 1 - log(sigma_i^2))
         kl = 0.5 * (torch.exp(logvar) + (mu_p - mu)**2 - 1 - logvar)  # [batch, num_mixtures, latent_dim]
-        kl = kl.sum(dim=2)  # Sum over latent dimensions: [batch, num_mixtures]
+        kl = kl.sum(dim=-1)  # Sum over latent dimensions: [batch, num_mixtures]
 
         # Weight the KL divergence by mixture weights and sum over mixtures
         kl = (weights * kl).sum(dim=1)  # [batch]

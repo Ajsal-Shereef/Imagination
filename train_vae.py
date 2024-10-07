@@ -20,7 +20,7 @@ def parse_args():
                         help="Environement to use")
     parser.add_argument("--use_logger", dest="use_logger", default=True,
                         help="whether store the results in logger")
-    parser.add_argument("--encoder_model", default="all-mpnet-base-v2",
+    parser.add_argument("--encoder_model", default="all-MiniLM-L6-v2",
                         help="which model to use as encoder")
     parser.add_argument("--datapath", default="data/captions.pkl",
                         help="Dataset to train the VAE")
@@ -66,15 +66,15 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
             kl_weight = 1.0
 
         for sentences in pbar:
-            #sentences = list(sentences)
-            sentences = sentences.float().to(device)
+            sentences = list(sentences)
+            # sentences = sentences.float().to(device)
             optimizer.zero_grad()
             # Forward pass
-            recon, mu, logvar, weights, z = model(sentences.float().to(device))
+            recon, mu, logvar, weights, z = model(sentences)
             # Encode sentences to get original embeddings
-            # original_embeddings = model.encoder.encode(sentences, convert_to_tensor=True, device=device)
+            original_embeddings = model.encoder.encode(sentences, convert_to_tensor=True, device=device)
             # Compute loss
-            loss, recon_loss, kl = model.loss_function(recon, sentences, mu, logvar, weights, kl_weight)
+            loss, recon_loss, kl = model.loss_function(recon, original_embeddings, mu, logvar, weights, kl_weight)
             # Backward pass and optimization
             loss.backward()
             optimizer.step()
@@ -126,7 +126,7 @@ def main(args):
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     num_mixtures = len(goals)
     vae = VAE(
-        input_dim=79,
+        pretrained_model_name=args.encoder_model,
         latent_dim=latent_dim,
         num_mixtures=num_mixtures,
         mu_p=mu_p,
