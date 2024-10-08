@@ -1,36 +1,89 @@
 import numpy as np
-from minigrid.core.constants import COLOR_NAMES
+from minigrid.core.constants import COLOR_NAMES, OBJECT_TO_IDX, COLOR_TO_IDX, STATE_TO_IDX
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
 from minigrid.core.world_object import Door, Goal, Key, Wall, Ball
 from minigrid.minigrid_env import MiniGridEnv
 
-def preprocess_observation(observation):
+# Define the possible directions the agent can face (4 possible directions: 0-3)
+NUM_DIRECTIONS = 4
+
+def get_one_hot_encoding(idx, size):
+    """Helper function to create one-hot encoding."""
+    one_hot = np.zeros(size)
+    one_hot[idx] = 1
+    return one_hot
+
+def preprocess_observation(obs):
     """
-    Preprocess the MiniGrid observation into a feature-based representation.
+    Preprocesses the MiniGrid observation using one-hot encoding, including the agent's direction.
     
     Args:
-        observation (dict): The observation from the MiniGrid environment.
-        num_objects (int): Number of distinct object types in the environment (e.g., walls, doors, boxes).
-
+        obs: Observation from the environment, a dictionary with keys `image`, `direction`, and `mission`.
     Returns:
-        np.array: A flattened feature vector representing the observation.
+        processed_obs: Preprocessed observation with one-hot encoded features for objects, colors, states, and agent direction, flattened into a 1D vector.
     """
-    # Extract the grid and agent's direction
-    grid = observation['image']  # Assuming 'image' is the grid the agent sees
-    agent_dir = observation['direction']  # 0: right, 1: down, 2: left, 3: up
+    # Extract the grid (partially observable view) and the agent's direction
+    grid_obs = obs['image']  # Shape: (grid_height, grid_width, 3)
+    agent_direction = obs['direction']  # Scalar value for direction (0 to 3)
 
-    # Flatten the grid into a single vector
-    grid_features = grid.flatten()
+    # Get dimensions for the grid (height, width) and the number of visible cells
+    height, width, _ = grid_obs.shape
+    num_cells = height * width
+    
+    # Precompute the sizes for one-hot encoding based on the constants
+    num_objects = len(OBJECT_TO_IDX)  # Total number of objects
+    num_colors = len(COLOR_TO_IDX)    # Total number of colors
+    num_states = len(STATE_TO_IDX)    # Total number of states (open, closed, etc.)
+    
+    # Create an empty list to store the encoded features
+    processed_obs = []
 
-    # One-hot encode the agent's direction (0-3)
-    agent_dir_onehot = np.zeros(4)
-    agent_dir_onehot[agent_dir] = 1
+    # Iterate over each cell in the grid (partially observable view)
+    for i in range(height):
+        for j in range(width):
+            # Each cell has an object, color, and state
+            obj_type = grid_obs[i, j, 0]
+            obj_color = grid_obs[i, j, 1]
+            obj_state = grid_obs[i, j, 2]
+            
+            # One-hot encode the object type, color, and state
+            obj_one_hot = get_one_hot_encoding(obj_type, num_objects)
+            color_one_hot = get_one_hot_encoding(obj_color, num_colors)
+            state_one_hot = get_one_hot_encoding(obj_state, num_states)
+            
+            # Concatenate the one-hot encoded features for this cell
+            encoded_cell = np.concatenate([obj_one_hot, color_one_hot, state_one_hot])
+            
+            # Append to the list of processed observations
+            processed_obs.append(encoded_cell)
+    
+    # Convert the list to a numpy array and reshape it to match the flattened view of the grid
+    processed_obs = np.array(processed_obs).reshape((num_cells, -1))
+    
+    # One-hot encode the agent's direction and concatenate it to the processed observation
+    direction_one_hot = get_one_hot_encoding(agent_direction, NUM_DIRECTIONS)
+    
+    # Concatenate direction encoding with the processed grid observation
+    processed_obs = np.concatenate([processed_obs.flatten(), direction_one_hot])
 
-    # Combine the flattened grid and agent's direction
-    features = np.concatenate([grid_features, agent_dir_onehot])
+    return processed_obs
 
-    return features
+# def preprocess_observation(obs):
+#     """
+#     Preprocesses the MiniGrid observation using one-hot encoding, including the agent's direction.
+    
+#     Args:
+#         obs: Observation from the environment, a dictionary with keys `image`, `direction`, and `mission`.
+#     Returns:
+#         processed_obs: Preprocessed observation with one-hot encoded features for objects, colors, states, and agent direction, flattened into a 1D vector.
+#     """
+#     return np.concatenate([obs['image'].flatten(), get_one_hot_encoding(obs["direction"], NUM_DIRECTIONS)])
+
+# Example usage:
+# Assuming `obs` is the observation dictionary received from the environment
+# Example grid size could be 7x7 for a partially observable environment
+# processed_obs = preprocess_observation(obs, grid_size=7)
 
 
 class DoorKeyPickup(MiniGridEnv):

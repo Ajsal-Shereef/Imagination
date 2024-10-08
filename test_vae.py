@@ -26,21 +26,23 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     learn_mu_p = False  # Enable learnable prior means
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     vae = VAE(
-        input_dim=79,
-        latent_dim=latent_dim,
-        num_mixtures=2,
-        mu_p=mu_p,
+        input_dim = 504, 
+        encoder_hidden = [512,512,512,512,256,256,256,256], 
+        decoder_hidden = [256,256,256,256,512,512,512,512], 
+        latent_dim=latent_dim, 
+        num_mixtures=2, 
+        mu_p=mu_p, 
         learn_mu_p=learn_mu_p
     )
     vae.load(vae_checkpoint)
     vae.to(device)
     # Visualization of the latent space 
-    data_dir = f'visualizations/{pretrained_model}'
+    data_dir = f'visualizations/{pretrained_model}/Feature_based'
     os.makedirs(data_dir, exist_ok=True)
-    latent = visualize_latent_space(vae, dataloader, device, method='pca', save_path=f'{data_dir}/latent_space_pca_{vae_checkpoint.split("/")[-1]}.png')
-    latent = visualize_latent_space(vae, dataloader, device, latent, method='tsne', save_path=f'{data_dir}/latent_space_tsne_{vae_checkpoint.split("/")[-1]}.png')
+    latent, labels = visualize_latent_space(vae, dataloader, device, method='pca', save_path=data_dir, checkpoint = vae_checkpoint.split("/")[-1])
+    latent = visualize_latent_space(vae, dataloader, device, latent, labels, method='tsne', save_path=data_dir, checkpoint = vae_checkpoint.split("/")[-1])
     
 if __name__ == "__main__":
-    test_vae("models/all-MiniLM-L6-v2/vae_epoch_1400.pth", "all-MiniLM-L6-v2", "data/captions.pkl")
+    test_vae("models/all-MiniLM-L6-v2/Feature_based/vae_sentence_bert_mog.pth", "all-MiniLM-L6-v2", "data/data.pkl")
     
     

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from network.mlp import MLP
 from sentence_transformers import SentenceTransformer
 
 
@@ -9,7 +10,7 @@ from sentence_transformers import SentenceTransformer
 # =============================
 
 class VAE(nn.Module):
-    def __init__(self, input_dim, latent_dim=128, num_mixtures=5, mu_p=None, learn_mu_p=False):
+    def __init__(self, input_dim, encoder_hidden, decoder_hidden, latent_dim=128, num_mixtures=5, mu_p=None, learn_mu_p=False):
         """
         Variational Autoencoder with a pretrained Sentence-BERT encoder, a mixture of Gaussians in the latent space,
         and a decoder to reconstruct Sentence-BERT embeddings.
@@ -25,58 +26,21 @@ class VAE(nn.Module):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
         self.num_mixtures = num_mixtures
-
-        # # Encoder: Pretrained Sentence-BERT with fixed weights
-        # self.encoder = SentenceTransformer(pretrained_model_name)
-        # for param in self.encoder.parameters():
-        #     param.requires_grad = False  # Freeze encoder weights
         self.embedding_dim = latent_dim
         
+        encoder_hidden = [input_dim] + encoder_hidden
         #Encoder model
         # Define the encoder model with multiple layers
-        self.encoder = nn.Sequential(
-            nn.Linear(input_dim, 64),  # First hidden layer
-            nn.ReLU(),
-            # nn.Dropout(0.2),
-            nn.Linear(64, 64),        # Second hidden layer
-            nn.ReLU(),
-            nn.Linear(64, 128),        # Second hidden layer
-            nn.ReLU(),
-            nn.Linear(128, 128),        # Second hidden layer
-            nn.ReLU(),
-            # nn.Dropout(0.2),
-            nn.Linear(128, 256),        # Second hidden layer
-            nn.ReLU(),
-            nn.Linear(256, 256),        # Third hidden layer
-            nn.ReLU(),
-            # nn.Dropout(0.2),
-            nn.Linear(256, self.embedding_dim),        # Third hidden layer
-            nn.ReLU()
-        )
-
+        self.encoder = MLP(encoder_hidden, latent_dim)
+        
         # Linear layers to output mixture parameters
         self.fc_mu = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
         self.fc_logvar = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
         self.fc_weights = nn.Linear(self.embedding_dim, num_mixtures)
 
+        decoder_hidden = [latent_dim] + decoder_hidden
         # Decoder
-        self.decoder = nn.Sequential(
-            nn.Linear(self.embedding_dim, 256),
-            nn.ReLU(),
-            nn.Linear(256, 256),
-            nn.ReLU(),
-            # nn.Dropout(0.2),
-            nn.Linear(256, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 64),
-            nn.ReLU(),
-            # nn.Dropout(0.2),
-            nn.Linear(64, 64),
-            nn.ReLU(),
-            nn.Linear(64, input_dim)
-        )
+        self.decoder = MLP(decoder_hidden, input_dim)
         
         # Apply Xavier initialization to both models
         # self.encoder.apply(self.init_weights)
@@ -115,8 +79,6 @@ class VAE(nn.Module):
             logvar (torch.Tensor): Log variances of the mixture components. Shape: [batch_size, num_mixtures, latent_dim]
             weights (torch.Tensor): Mixture weights. Shape: [batch_size, num_mixtures]
         """
-        # Get Sentence-BERT embeddings
-        #embeddings = self.encoder.encode(x, convert_to_tensor=True, device=self.fc_mu.weight.device)
         embeddings = self.encoder(x)
         # embeddings: [batch_size, embedding_dim]
 
@@ -212,7 +174,7 @@ class VAE(nn.Module):
         kl = kl.sum(dim=2)  # Sum over latent dimensions: [batch, num_mixtures]
 
         # Weight the KL divergence by mixture weights and sum over mixtures
-        kl = (weights * kl).sum(dim=1)  # [batch]
+        kl = ((1/self.num_mixtures) * kl).sum(dim=1)  # [batch]
         return kl
 
     def loss_function(self, recon, original, mu, logvar, weights, kl_weight):

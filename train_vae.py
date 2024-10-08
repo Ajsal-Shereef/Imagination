@@ -20,9 +20,9 @@ def parse_args():
                         help="Environement to use")
     parser.add_argument("--use_logger", dest="use_logger", default=True,
                         help="whether store the results in logger")
-    parser.add_argument("--encoder_model", default="all-mpnet-base-v2",
+    parser.add_argument("--encoder_model", default="all-MiniLM-L6-v2",
                         help="which model to use as encoder")
-    parser.add_argument("--datapath", default="data/captions.pkl",
+    parser.add_argument("--datapath", default="data/data.pkl",
                         help="Dataset to train the VAE")
     parser.add_argument("--epoch", default=6000,
                         help="Number of training iterations")
@@ -57,24 +57,21 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         # Determine KL weight
         if kl_annealing:
             if epoch < anneal_start:
-                kl_weight = 0.0
+                kl_weight = 0.5
             elif anneal_start <= epoch <= anneal_end:
-                kl_weight = 1.0*((epoch - anneal_start + 1) / (anneal_end - anneal_start + 1))
+                kl_weight = 0.5*((epoch - anneal_start + 1) / (anneal_end - anneal_start + 1))
             else:
-                kl_weight = 1.0
+                kl_weight = 0.5
         else:
-            kl_weight = 1.0
+            kl_weight = 0.5
 
-        for sentences in pbar:
-            #sentences = list(sentences)
-            sentences = sentences.float().to(device)
+        for data in pbar:
+            data = data.float().to(device)
             optimizer.zero_grad()
             # Forward pass
-            recon, mu, logvar, weights, z = model(sentences.float().to(device))
-            # Encode sentences to get original embeddings
-            # original_embeddings = model.encoder.encode(sentences, convert_to_tensor=True, device=device)
+            recon, mu, logvar, weights, z = model(data.float().to(device))
             # Compute loss
-            loss, recon_loss, kl = model.loss_function(recon, sentences, mu, logvar, weights, kl_weight)
+            loss, recon_loss, kl = model.loss_function(recon, data, mu, logvar, weights, kl_weight)
             # Backward pass and optimization
             loss.backward()
             optimizer.step()
@@ -126,24 +123,26 @@ def main(args):
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     num_mixtures = len(goals)
     vae = VAE(
-        input_dim=79,
-        latent_dim=latent_dim,
-        num_mixtures=num_mixtures,
-        mu_p=mu_p,
+        input_dim = 504, 
+        encoder_hidden = [512,512,512,512,256,256,256,256], 
+        decoder_hidden = [256,256,256,256,512,512,512,512], 
+        latent_dim=latent_dim, 
+        num_mixtures=num_mixtures, 
+        mu_p=mu_p, 
         learn_mu_p=learn_mu_p
     )
     vae.to(device)
 
     # Define optimizer (only parameters that require gradients)
-    optimizer = optim.Adam(filter(lambda p: p.requires_grad, vae.parameters()), lr=0.001)
+    optimizer = optim.Adam(vae.parameters(), lr=0.001)
 
     # Training loop with KL annealing
     epochs = args.epoch
-    kl_annealing = False
+    kl_annealing = True
     anneal_start = args.epoch/args.epoch
     anneal_end = args.epoch
     # Create data directory if it doesn't exist
-    data_dir = f'models/{args.encoder_model}'
+    data_dir = f'models/{args.encoder_model}/Feature_based'
     os.makedirs(data_dir, exist_ok=True)
     train_vae(vae, dataloader, optimizer, device, data_dir, epochs, kl_annealing, anneal_start, anneal_end)
 
@@ -152,10 +151,10 @@ def main(args):
     vae.save(save_path)
 
     # Visualization of the latent space 
-    data_dir = 'visualizations'
-    os.makedirs(data_dir, exist_ok=True)
-    latent = visualize_latent_space(vae, dataloader, device, method='pca', save_path=f'{data_dir}/latent_space_pca.png')
-    latent = visualize_latent_space(vae, dataloader, device, latent, method='tsne', save_path=f'{data_dir}/latent_space_tsne.png')
+    # data_dir = 'visualizations'
+    # os.makedirs(data_dir, exist_ok=True)
+    # latent = visualize_latent_space(vae, dataloader, device, method='pca', save_path=f'{data_dir}/latent_space_pca.png')
+    # latent = visualize_latent_space(vae, dataloader, device, latent, method='tsne', save_path=f'{data_dir}/latent_space_tsne.png')
 
 if __name__ == "__main__":
     args = parse_args()

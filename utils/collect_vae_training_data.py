@@ -13,7 +13,6 @@ import torch.nn.functional as F
 import sys
 sys.path.append('.')
 
-#from utils.state_captioner import MiniGridStateCaptioner
 from env.env import preprocess_observation
 
 # =============================
@@ -220,7 +219,6 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             done = terminated + truncated
             
             #Get the caption
-            #caption = state_captioner.generate_caption(next_state)
             next_state = preprocess_observation(next_state)
             # Store the transition
             data.append(next_state)
@@ -269,7 +267,7 @@ def main():
     )
     
     # Save data
-    data_path = os.path.join(data_dir, 'captions.pkl')
+    data_path = os.path.join(data_dir, 'data.pkl')
     with open(data_path, 'wb') as f:
         pickle.dump(data, f)
     print(f"Collected {len(data)} transitions and saved to {data_path}")
