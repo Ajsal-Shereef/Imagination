@@ -1,7 +1,8 @@
-import argparse
 import os
+import cv2
 import pickle
 import random
+import argparse
 from collections import deque
 
 import minigrid
@@ -203,8 +204,11 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     
     for episode in range(1, episodes + 1):
         state, info = env.reset()
+        state = env.get_frame()
+        state = cv2.resize(state, (84, 84), 
+                           interpolation = cv2.INTER_LINEAR)
         #caption = state_captioner.generate_caption(state)
-        state = preprocess_observation(state)
+        #state = preprocess_observation(state)
         data.append(state)
         done = False
         step = 0
@@ -216,10 +220,13 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
                 action = select_action_q_network(q_network, state, device)
             
             next_state, reward, terminated, truncated, info = env.step(action)
+            next_state = env.get_frame()
+            next_state = cv2.resize(next_state, (84, 84), 
+                               interpolation = cv2.INTER_LINEAR)
             done = terminated + truncated
             
             #Get the caption
-            next_state = preprocess_observation(next_state)
+            # next_state = preprocess_observation(next_state)
             # Store the transition
             data.append(next_state)
             
@@ -267,7 +274,7 @@ def main():
     )
     
     # Save data
-    data_path = os.path.join(data_dir, 'data.pkl')
+    data_path = os.path.join(data_dir, 'image.pkl')
     with open(data_path, 'wb') as f:
         pickle.dump(data, f)
     print(f"Collected {len(data)} transitions and saved to {data_path}")
