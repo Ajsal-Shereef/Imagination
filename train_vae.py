@@ -20,7 +20,7 @@ def parse_args():
                         help="Environement to use")
     parser.add_argument("--use_logger", dest="use_logger", default=True,
                         help="whether store the results in logger")
-    parser.add_argument("--encoder_model", default="all-MiniLM-L6-v2",
+    parser.add_argument("--encoder_model", default="paraphrase-MiniLM-L6-v2",
                         help="which model to use as encoder")
     parser.add_argument("--datapath", default="data/captions.pkl",
                         help="Dataset to train the VAE")
@@ -104,7 +104,6 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
 
 def main(args):
     dataset = get_data(args.datapath)
-    # dataset = normalize_data(dataset)
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")

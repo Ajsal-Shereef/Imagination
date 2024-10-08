@@ -32,28 +32,6 @@ class VAE(nn.Module):
             param.requires_grad = False  # Freeze encoder weights
         self.embedding_dim = latent_dim
         
-        #Encoder model
-        # Define the encoder model with multiple layers
-        # self.encoder = nn.Sequential(
-        #     nn.Linear(input_dim, 64),  # First hidden layer
-        #     nn.ReLU(),
-        #     # nn.Dropout(0.2),
-        #     nn.Linear(64, 64),        # Second hidden layer
-        #     nn.ReLU(),
-        #     nn.Linear(64, 128),        # Second hidden layer
-        #     nn.ReLU(),
-        #     nn.Linear(128, 128),        # Second hidden layer
-        #     nn.ReLU(),
-        #     # nn.Dropout(0.2),
-        #     nn.Linear(128, 256),        # Second hidden layer
-        #     nn.ReLU(),
-        #     nn.Linear(256, 256),        # Third hidden layer
-        #     nn.ReLU(),
-        #     # nn.Dropout(0.2),
-        #     nn.Linear(256, self.embedding_dim),        # Third hidden layer
-        #     nn.ReLU()
-        # )
-
         # Linear layers to output mixture parameters
         self.fc_mu = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
         self.fc_logvar = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
@@ -79,11 +57,10 @@ class VAE(nn.Module):
         )
         
         # Apply Xavier initialization to both models
-        # self.encoder.apply(self.init_weights)
-        # self.decoder.apply(self.init_weights)
-        # self.fc_mu.apply(self.init_weights)
-        # self.fc_logvar.apply(self.init_weights)
-        # self.fc_weights.apply(self.init_weights)
+        self.decoder.apply(self.init_weights)
+        self.fc_mu.apply(self.init_weights)
+        self.fc_logvar.apply(self.init_weights)
+        self.fc_weights.apply(self.init_weights)
 
         # Prior means (mu_p). If not provided, defaults to zero vectors
         if mu_p is None:
@@ -117,7 +94,6 @@ class VAE(nn.Module):
         """
         # Get Sentence-BERT embeddings
         embeddings = self.encoder.encode(x, convert_to_tensor=True, device=self.fc_mu.weight.device)
-        # embeddings = self.encoder(x)
         # embeddings: [batch_size, embedding_dim]
 
         # Compute mixture parameters
