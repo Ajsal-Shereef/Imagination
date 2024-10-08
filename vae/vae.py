@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from network.mlp import MLP
+from architectures.mlp import MLP
 from sentence_transformers import SentenceTransformer
 
 
@@ -28,19 +28,17 @@ class VAE(nn.Module):
         self.num_mixtures = num_mixtures
         self.embedding_dim = latent_dim
         
-        encoder_hidden = [input_dim] + encoder_hidden
         #Encoder model
         # Define the encoder model with multiple layers
-        self.encoder = MLP(encoder_hidden, latent_dim)
+        self.encoder = MLP(input_dim, latent_dim, encoder_hidden)
         
         # Linear layers to output mixture parameters
         self.fc_mu = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
         self.fc_logvar = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
         self.fc_weights = nn.Linear(self.embedding_dim, num_mixtures)
 
-        decoder_hidden = [latent_dim] + decoder_hidden
         # Decoder
-        self.decoder = MLP(decoder_hidden, input_dim)
+        self.decoder = MLP(latent_dim, input_dim, decoder_hidden)
         
         # Apply Xavier initialization to both models
         # self.encoder.apply(self.init_weights)
