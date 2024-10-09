@@ -1,8 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from network.mlp import MLP
-from sentence_transformers import SentenceTransformer
+from architectures.cnn import Conv2d_MLP_Model, ConvDecoder
 
 
 # =============================
@@ -10,7 +9,23 @@ from sentence_transformers import SentenceTransformer
 # =============================
 
 class VAE(nn.Module):
-    def __init__(self, input_dim, encoder_hidden, decoder_hidden, latent_dim=128, num_mixtures=5, mu_p=None, learn_mu_p=False):
+    def __init__(self, 
+                 input_channels,
+                 fc_input_size,
+                 encoder_channels,
+                 encoder_kernels,
+                 encoder_strides,
+                 encoder_padding,
+                 encoder_fc_hidden_size,
+                 decoder_channels,
+                 decoder_kernels,
+                 decoder_strides,
+                 decoder_padding,
+                 decoder_fc_hidden_size,
+                 latent_dim=384, 
+                 num_mixtures=2, 
+                 mu_p=None, 
+                 learn_mu_p=False):
         """
         Variational Autoencoder with a pretrained Sentence-BERT encoder, a mixture of Gaussians in the latent space,
         and a decoder to reconstruct Sentence-BERT embeddings.
@@ -28,26 +43,36 @@ class VAE(nn.Module):
         self.num_mixtures = num_mixtures
         self.embedding_dim = latent_dim
         
-        encoder_hidden = [input_dim] + encoder_hidden
         #Encoder model
         # Define the encoder model with multiple layers
-        self.encoder = MLP(encoder_hidden, latent_dim)
+        self.encoder = Conv2d_MLP_Model(input_channels=input_channels, #Accepting high level encoding of the state
+                                        fc_input_size=fc_input_size,
+                                        fc_output_size=self.embedding_dim, 
+                                        nonlinearity=torch.relu,
+                                        channels=encoder_channels,
+                                        kernel_sizes=encoder_kernels,
+                                        strides=encoder_strides,
+                                        paddings=encoder_padding,
+                                        fc_hidden_sizes=encoder_fc_hidden_size,
+                                        fc_hidden_activation=torch.relu,
+                                        use_maxpool = False,
+                                        dropout_prob = 0.0)
         
         # Linear layers to output mixture parameters
         self.fc_mu = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
         self.fc_logvar = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
         self.fc_weights = nn.Linear(self.embedding_dim, num_mixtures)
 
-        decoder_hidden = [latent_dim] + decoder_hidden
         # Decoder
-        self.decoder = MLP(decoder_hidden, input_dim)
+        self.decoder = ConvDecoder(latent_dim = latent_dim,
+                                   fc_output_size = fc_input_size,
+                                   fc_hidden_layer = decoder_fc_hidden_size,
+                                   channels = decoder_channels,
+                                   kernels = decoder_kernels,
+                                   strides = decoder_strides,
+                                   paddings = decoder_padding,
+                                   image_channel = input_channels)
         
-        # Apply Xavier initialization to both models
-        # self.encoder.apply(self.init_weights)
-        # self.decoder.apply(self.init_weights)
-        # self.fc_mu.apply(self.init_weights)
-        # self.fc_logvar.apply(self.init_weights)
-        # self.fc_weights.apply(self.init_weights)
 
         # Prior means (mu_p). If not provided, defaults to zero vectors
         if mu_p is None:
@@ -83,9 +108,9 @@ class VAE(nn.Module):
         # embeddings: [batch_size, embedding_dim]
 
         # Compute mixture parameters
-        mu = self.fc_mu(embeddings).view(-1, self.num_mixtures, self.latent_dim)        # [batch_size, num_mixtures, latent_dim]
-        logvar = self.fc_logvar(embeddings).view(-1, self.num_mixtures, self.latent_dim)  # [batch_size, num_mixtures, latent_dim]
-        weights = F.softmax(self.fc_weights(embeddings), dim=-1)                       # [batch_size, num_mixtures]
+        mu = self.fc_mu(embeddings[0]).view(-1, self.num_mixtures, self.latent_dim)        # [batch_size, num_mixtures, latent_dim]
+        logvar = self.fc_logvar(embeddings[0]).view(-1, self.num_mixtures, self.latent_dim)  # [batch_size, num_mixtures, latent_dim]
+        weights = F.softmax(self.fc_weights(embeddings[0]), dim=-1)                       # [batch_size, num_mixtures]
 
         return mu, logvar, weights
 

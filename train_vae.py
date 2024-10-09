@@ -22,7 +22,7 @@ def parse_args():
                         help="whether store the results in logger")
     parser.add_argument("--encoder_model", default="all-MiniLM-L6-v2",
                         help="which model to use as encoder")
-    parser.add_argument("--datapath", default="data/data.pkl",
+    parser.add_argument("--datapath", default="data/image.pkl",
                         help="Dataset to train the VAE")
     parser.add_argument("--epoch", default=6000,
                         help="Number of training iterations")
@@ -66,10 +66,10 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
             kl_weight = 0.5
 
         for data in pbar:
-            data = data.float().to(device)
+            data = data.permute(0, 3, 1, 2).float().to(device)
             optimizer.zero_grad()
             # Forward pass
-            recon, mu, logvar, weights, z = model(data.float().to(device))
+            recon, mu, logvar, weights, z = model(data)
             # Compute loss
             loss, recon_loss, kl = model.loss_function(recon, data, mu, logvar, weights, kl_weight)
             # Backward pass and optimization
@@ -108,7 +108,7 @@ def main(args):
 
     # Initialize dataset and dataloader
     dataset = TextDataset(dataset)
-    dataloader = DataLoader(dataset, batch_size=1000, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=800, shuffle=True)
     
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
     goal_gen = GetLLMGoals()
@@ -122,14 +122,22 @@ def main(args):
     learn_mu_p = False  # Enable learnable prior means
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     num_mixtures = len(goals)
-    vae = VAE(
-        input_dim = 504, 
-        encoder_hidden = [512,512,512,512,256,256,256,256], 
-        decoder_hidden = [256,256,256,256,512,512,512,512], 
-        latent_dim=latent_dim, 
-        num_mixtures=num_mixtures, 
-        mu_p=mu_p, 
-        learn_mu_p=learn_mu_p
+    vae = VAE(input_channels = dataset[0].shape[2],
+              fc_input_size = 3200,
+              encoder_channels = [32,64,128,128],
+              encoder_kernels = [4,4,4,4],
+              encoder_strides = [2,2,2,2],
+              encoder_padding = [1,1,1,1],
+              encoder_fc_hidden_size = [512],
+              decoder_channels = [128,64,32,16],
+              decoder_kernels = [5,3,4,4],
+              decoder_strides = [2,2,2,2],
+              decoder_padding = [1,1,1,1],
+              decoder_fc_hidden_size = [512],
+              latent_dim = latent_dim, 
+              num_mixtures = num_mixtures, 
+              mu_p = mu_p, 
+              learn_mu_p = learn_mu_p
     )
     vae.to(device)
 
@@ -138,7 +146,7 @@ def main(args):
 
     # Training loop with KL annealing
     epochs = args.epoch
-    kl_annealing = True
+    kl_annealing = False
     anneal_start = args.epoch/args.epoch
     anneal_end = args.epoch
     # Create data directory if it doesn't exist

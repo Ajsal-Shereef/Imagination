@@ -3,12 +3,9 @@ import math
 import torch.nn as nn
 import math
 
-from learning_agent.common_utils import identity
-from learning_agent.architectures.mlp import MLP, GaussianDist, CategoricalDistParams, TanhGaussianDistParams
-from utils.utils import get_device, custom_action_encoding
+from architectures.common_utils import identity
+from architectures.mlp import MLP, GaussianDist, CategoricalDistParams, TanhGaussianDistParams, Linear
 import torch.nn.functional as F
-from torch.distributions.normal import Normal
-import torchvision.models as models
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -75,7 +72,7 @@ class CNN(nn.Module):
         x = self.cnn(x)
         # flatten x
         if is_flatten:
-            x = x.view(x.size(0), -1)
+            x = x.reshape(x.size(0), -1)
         return x
     
     def get_cnn_feature(self, input, cnn_layer, is_flatten=True):
@@ -182,6 +179,43 @@ def weights_init(m):
             m.bias.data.fill_(0)
         except AttributeError:
             print("Skipping initialization of ", classname)
+            
+class ConvDecoder(nn.Module):
+    def __init__(self, 
+                 latent_dim,
+                 fc_output_size,
+                 fc_hidden_layer,
+                 channels,
+                 kernels,
+                 strides,
+                 paddings,
+                 image_channel):
+        super(ConvDecoder, self).__init__()
+        
+        self.fc_decoder_mlp = MLP(latent_dim, fc_output_size, fc_hidden_layer)
+        self.unflatten = nn.Unflatten(1, (128, 5, 5))
+        
+        out_channels = channels[1:] + [image_channel]
+        self.deconv_layers = []
+        
+        for i, (in_channel, out_channel, kernel, padding, stride) in enumerate(zip(channels, out_channels, kernels, paddings, strides)):
+            convtranspose = nn.ConvTranspose2d(in_channel, out_channel, kernel_size=kernel, stride=stride, padding=padding).to(device)
+            self.deconv_layers.append(convtranspose)
+            batchnorm = nn.BatchNorm2d(out_channel).to(device)
+            self.deconv_layers.append(batchnorm)
+            if i != len(channels):
+                relu = nn.ReLU()
+                self.deconv_layers.append(relu)
+            else:
+                relu = nn.Softmax()
+                self.deconv_layers.append(relu)
+
+    def forward(self, x):
+        x = self.fc_decoder_mlp(x)
+        x = self.unflatten(x)
+        for layer in self.deconv_layers:
+            x = layer(x)
+        return x
             
 
 # class VAE(nn.Module):

@@ -4,9 +4,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 
-from learning_agent.common_utils import identity
-from learning_agent.math_utils import TanhNormal
-from utils.utils import get_device
+from architectures.common_utils import identity
+from architectures.math_utils import TanhNormal
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
