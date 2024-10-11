@@ -26,6 +26,8 @@ class VAE(nn.Module):
         super(VAE, self).__init__()
         self.latent_dim = latent_dim
         self.num_mixtures = num_mixtures
+        if mu_p is None:
+            self.num_mixtures = 1
         self.embedding_dim = latent_dim
         
         #Encoder model
@@ -33,9 +35,10 @@ class VAE(nn.Module):
         self.encoder = MLP(input_dim, latent_dim, encoder_hidden)
         
         # Linear layers to output mixture parameters
-        self.fc_mu = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
-        self.fc_logvar = nn.Linear(self.embedding_dim, latent_dim * num_mixtures)
-        self.fc_weights = nn.Linear(self.embedding_dim, num_mixtures)
+        self.fc_mu = nn.Linear(self.embedding_dim, latent_dim * self.num_mixtures)
+        self.fc_logvar = nn.Linear(self.embedding_dim, latent_dim * self.num_mixtures)
+        if mu_p is not None:
+            self.fc_weights = nn.Linear(self.embedding_dim, self.num_mixtures)
 
         # Decoder
         self.decoder = MLP(latent_dim, input_dim, decoder_hidden)
@@ -49,10 +52,10 @@ class VAE(nn.Module):
 
         # Prior means (mu_p). If not provided, defaults to zero vectors
         if mu_p is None:
-            mu_p = torch.zeros(num_mixtures, latent_dim)
+            mu_p = torch.zeros(self.num_mixtures, latent_dim)
         else:
-            assert mu_p.shape == (num_mixtures, latent_dim), \
-                f"mu_p must have shape ({num_mixtures}, {latent_dim}), but got {mu_p.shape}"
+            assert mu_p.shape == (self.num_mixtures, latent_dim), \
+                f"mu_p must have shape ({self.num_mixtures}, {latent_dim}), but got {mu_p.shape}"
         if learn_mu_p:
             self.mu_p = nn.Parameter(mu_p)  # Make mu_p learnable
         else:
@@ -81,11 +84,15 @@ class VAE(nn.Module):
         # embeddings: [batch_size, embedding_dim]
 
         # Compute mixture parameters
-        mu = self.fc_mu(embeddings).view(-1, self.num_mixtures, self.latent_dim)        # [batch_size, num_mixtures, latent_dim]
-        logvar = self.fc_logvar(embeddings).view(-1, self.num_mixtures, self.latent_dim)  # [batch_size, num_mixtures, latent_dim]
-        weights = F.softmax(self.fc_weights(embeddings), dim=-1)                       # [batch_size, num_mixtures]
-
-        return mu, logvar, weights
+        if not self.num_mixtures==1:
+            mu = self.fc_mu(embeddings).view(-1, self.num_mixtures, self.latent_dim)        # [batch_size, num_mixtures, latent_dim]
+            logvar = self.fc_logvar(embeddings).view(-1, self.num_mixtures, self.latent_dim)  # [batch_size, num_mixtures, latent_dim]
+            weights = F.softmax(self.fc_weights(embeddings), dim=-1)                       # [batch_size, num_mixtures]
+            return mu, logvar, weights
+        else:
+            mu = self.fc_mu(embeddings)
+            logvar = self.fc_logvar(embeddings)
+            return mu, logvar, []
 
     def reparameterize(self, mu, logvar, weights):
         """
@@ -103,17 +110,24 @@ class VAE(nn.Module):
         """
         batch_size = mu.size(0)
         device = mu.device
+        
+        if not self.num_mixtures==1:
+            # Sample from each Gaussian component
+            eps = torch.randn(batch_size, self.num_mixtures, self.latent_dim).to(device)  # [batch_size, num_mixtures, latent_dim]
+            sigma = torch.exp(0.5 * logvar)  # [batch_size, num_mixtures, latent_dim]
+            z_i = mu + sigma * eps          # [batch_size, num_mixtures, latent_dim]
 
-        # Sample from each Gaussian component
-        eps = torch.randn(batch_size, self.num_mixtures, self.latent_dim).to(device)  # [batch_size, num_mixtures, latent_dim]
-        sigma = torch.exp(0.5 * logvar)  # [batch_size, num_mixtures, latent_dim]
-        z_i = mu + sigma * eps          # [batch_size, num_mixtures, latent_dim]
+            # Compute weighted sum: z = sum(alpha_i * z_i)
+            weights = weights.unsqueeze(-1)  # [batch_size, num_mixtures, 1]
+            z = torch.sum(weights * z_i, dim=1)  # [batch_size, latent_dim]
 
-        # Compute weighted sum: z = sum(alpha_i * z_i)
-        weights = weights.unsqueeze(-1)  # [batch_size, num_mixtures, 1]
-        z = torch.sum(weights * z_i, dim=1)  # [batch_size, latent_dim]
-
-        return z, z_i, weights.squeeze(-1)  # Returning z_i for potential debugging
+            return z, z_i, weights.squeeze(-1)  # Returning z_i for potential debugging
+        else:
+            # Sample from each Gaussian component
+            eps = torch.randn(batch_size, self.latent_dim).to(device)  # [batch_size, latent_dim]
+            sigma = torch.exp(0.5 * logvar)  # [batch_size, latent_dim]
+            z = mu + sigma * eps          # [batch_size, latent_dim]
+            return z
 
     def decode(self, z):
         """
@@ -142,8 +156,13 @@ class VAE(nn.Module):
             weights (torch.Tensor): Mixture weights. Shape: [batch_size, num_mixtures]
             z (torch.Tensor): Sampled latent vectors. Shape: [batch_size, latent_dim]
         """
-        mu, logvar, weights = self.encode(x)
-        z, z_i, weights_expanded = self.reparameterize(mu, logvar, weights)
+        if not self.num_mixtures==1:
+            mu, logvar, weights = self.encode(x)
+            z, z_i, weights_expanded = self.reparameterize(mu, logvar, weights)
+        else:
+            mu, logvar, weights = self.encode(x)
+            z = self.reparameterize(mu, logvar, weights)
+            
         recon = self.decode(z)
         return recon, mu, logvar, weights, z
 
@@ -164,16 +183,32 @@ class VAE(nn.Module):
             mu_p = self.mu_p  # [num_mixtures, latent_dim]
             mu_p = mu_p.unsqueeze(0)  # [1, num_mixtures, latent_dim]
         else:
-            mu_p = self.mu_p_buffer.unsqueeze(0)  # [1, num_mixtures, latent_dim]
+            if not self.num_mixtures==1:
+                mu_p = self.mu_p_buffer.unsqueeze(0)  # [1, num_mixtures, latent_dim]
+            else:
+                mu_p = self.mu_p_buffer
 
         # Compute KL divergence for each component and each latent dimension
         # KL(N(mu_i, sigma_i^2) || N(mu_p_i, I)) = 0.5 * (sigma_i^2 + (mu_p_i - mu_i)^2 - 1 - log(sigma_i^2))
         kl = 0.5 * (torch.exp(logvar) + (mu_p - mu)**2 - 1 - logvar)  # [batch, num_mixtures, latent_dim]
-        kl = kl.sum(dim=2)  # Sum over latent dimensions: [batch, num_mixtures]
+        kl = kl.sum(dim=-1)  # Sum over latent dimensions: [batch, num_mixtures]
 
         # Weight the KL divergence by mixture weights and sum over mixtures
-        kl = ((1/self.num_mixtures) * kl).sum(dim=1)  # [batch]
+        if not self.num_mixtures==1:
+            kl = (weights * kl).sum(dim=1)  # [batch]
         return kl
+    
+    def weight_regularisation_loss(self, weight):
+        """
+        Forces VAE to equally weight the given gaussians
+        
+        Args:
+            weight (torch.Tensor): Weight learned from the VAE model
+            
+        Returns:
+            loss (torch.Tensor): Weight regularisation loss
+        """
+        return -torch.sum(weight * torch.log(weight + 1e-9))
 
     def loss_function(self, recon, original, mu, logvar, weights, kl_weight):
         """
@@ -197,10 +232,13 @@ class VAE(nn.Module):
 
         # KL divergence loss
         kl = self.kl_divergence(mu, logvar, weights).sum()
+        
+        #Weight regularisation term
+        # weight_regualrisation_loss = self.weight_regularisation_loss(weights)
 
         # Total loss with annealed KL weight
-        loss = recon_loss + kl_weight * kl
-        return loss, recon_loss, kl
+        loss = recon_loss + kl_weight * kl #- weight_regualrisation_loss
+        return loss, recon_loss, kl#, weight_regualrisation_loss
 
     def save(self, path):
         """

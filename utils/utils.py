@@ -59,6 +59,7 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
     plt.savefig(fig_save_name)
     plt.close()
     
+    # all_data = (all_data-np.mean(all_data))/np.std(all_data)
     if method == 'pca':
         reducer = PCA(n_components=2)
         reduced_z = reducer.fit_transform(all_data)
@@ -71,7 +72,8 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
         raise ValueError("Method must be 'pca' or 'tsne'.")
 
     plt.figure(figsize=(8, 6))
-    plt.scatter(reduced_z[:, 0], reduced_z[:, 1], alpha=0.6)
+    for label in np.unique(all_labels):
+        plt.scatter(reduced_z[all_labels == label, 0], reduced_z[all_labels == label, 1], label=f'Goal {label}', alpha=0.6)
     plt.title(f'Latent Space Visualization using {method.upper()}')
     plt.xlabel('Component 1')
     plt.ylabel('Component 2')

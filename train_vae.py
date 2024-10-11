@@ -11,6 +11,7 @@ from vae.vae import VAE
 from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader
 from utils.get_llm_output import GetLLMGoals
+from torch.utils.data import DataLoader, random_split
 
 
 def parse_args():
@@ -24,7 +25,7 @@ def parse_args():
                         help="which model to use as encoder")
     parser.add_argument("--datapath", default="data/data.pkl",
                         help="Dataset to train the VAE")
-    parser.add_argument("--epoch", default=6000,
+    parser.add_argument("--epoch", default=80000,
                         help="Number of training iterations")
     return parser.parse_args()
     
@@ -33,7 +34,7 @@ def parse_args():
 # =============================
 
 def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
-    epochs=10, kl_annealing=True, anneal_start=1, anneal_end=10, checkpoint_interval=200):
+    epochs=10, kl_annealing=True, anneal_start=1, anneal_end=10, checkpoint_interval=5000):
     """
     Train the VAE model.
 
@@ -57,13 +58,13 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         # Determine KL weight
         if kl_annealing:
             if epoch < anneal_start:
-                kl_weight = 0.5
+                kl_weight = 0.3
             elif anneal_start <= epoch <= anneal_end:
-                kl_weight = 0.5*((epoch - anneal_start + 1) / (anneal_end - anneal_start + 1))
+                kl_weight = 0.3*((epoch - anneal_start + 1) / (anneal_end - anneal_start + 1))
             else:
-                kl_weight = 0.5
+                kl_weight = 0.3
         else:
-            kl_weight = 0.5
+            kl_weight = 0.3
 
         for data in pbar:
             data = data.float().to(device)
@@ -80,10 +81,14 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
             total_recon += recon_loss.item()
             total_kl += kl.item()
             pbar.set_postfix({'Loss': loss.item(), 'Recon': recon_loss.item(), 'KL': kl.item(), 'KL Weight': kl_weight})
+        
+        # Scheduler step
+        # scheduler.step(total_loss)
 
         average_loss = total_loss / len(dataloader)
         average_recon = total_recon / len(dataloader)
         average_kl = total_kl / len(dataloader)
+        # current_lr = scheduler.get_last_lr()[0]
         wandb.log({"Total loss" : average_loss,
                    "Reconstruction loss" : average_recon,
                    "KL divergence" : average_kl,
@@ -101,6 +106,8 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
 
 def main(args):
     dataset = get_data(args.datapath)
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
     # dataset = normalize_data(dataset)
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -109,6 +116,7 @@ def main(args):
     # Initialize dataset and dataloader
     dataset = TextDataset(dataset)
     dataloader = DataLoader(dataset, batch_size=1000, shuffle=True)
+
     
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
     goal_gen = GetLLMGoals()
@@ -122,10 +130,23 @@ def main(args):
     learn_mu_p = False  # Enable learnable prior means
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     num_mixtures = len(goals)
+    
+    code_snippet = """
     vae = VAE(
-        input_dim = 504, 
-        encoder_hidden = [512,512,512,512,256,256,256,256], 
-        decoder_hidden = [256,256,256,256,512,512,512,512], 
+        input_dim = dataset[0].shape[0], 
+        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], 
+        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
+        latent_dim=latent_dim, 
+        num_mixtures=num_mixtures, 
+        mu_p=mu_p, 
+        learn_mu_p=learn_mu_p
+    )
+    """
+    wandb.log({"code_snippet": code_snippet})
+    vae = VAE(
+        input_dim = dataset[0].shape[0], 
+        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
+        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
         latent_dim=latent_dim, 
         num_mixtures=num_mixtures, 
         mu_p=mu_p, 
@@ -135,10 +156,13 @@ def main(args):
 
     # Define optimizer (only parameters that require gradients)
     optimizer = optim.Adam(vae.parameters(), lr=0.001)
+    
+    # Learning rate scheduler
+    # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
 
     # Training loop with KL annealing
     epochs = args.epoch
-    kl_annealing = True
+    kl_annealing = False
     anneal_start = args.epoch/args.epoch
     anneal_end = args.epoch
     # Create data directory if it doesn't exist
@@ -147,7 +171,8 @@ def main(args):
     train_vae(vae, dataloader, optimizer, device, data_dir, epochs, kl_annealing, anneal_start, anneal_end)
 
     # Save the trained model
-    save_path = f"{data_dir}/vae_sentence_bert_mog.pth"
+    #save_path = f"{data_dir}/vae_sentence_bert_mog.pth"
+    save_path = f"{data_dir}/vae_normal.pth"
     vae.save(save_path)
 
     # Visualization of the latent space 
@@ -158,7 +183,7 @@ def main(args):
 
 if __name__ == "__main__":
     args = parse_args()
-    wandb.init(project="Imagination-VAE_training", config=args)
+    # wandb.init(project="Imagination-VAE_training", config=args)
     main(args)
 
 
