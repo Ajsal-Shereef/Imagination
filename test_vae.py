@@ -28,8 +28,8 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     num_mixtures = len(goals)
     vae = VAE(
         input_dim = dataset[0].shape[0], 
-        encoder_hidden = [1024,1024,512,512,512,256,256,256],
-        decoder_hidden = [256,256,256,512,512,512,1024,1024], 
+        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], 
+        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
         latent_dim=latent_dim, 
         num_mixtures=num_mixtures, 
         mu_p=mu_p, 
@@ -44,6 +44,6 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     latent = visualize_latent_space(vae, dataloader, device, latent, labels, method='tsne', save_path=data_dir, checkpoint = vae_checkpoint.split("/")[-1])
     
 if __name__ == "__main__":
-    test_vae("models/all-MiniLM-L6-v2/Feature_based/vae_epoch_6000.pth", "all-MiniLM-L6-v2", "data/data.pkl")
+    test_vae("models/all-MiniLM-L6-v2/Feature_based/vae_epoch_40000.pth", "all-MiniLM-L6-v2", "data/data.pkl")
     
     

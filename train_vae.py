@@ -11,8 +11,7 @@ from vae.vae import VAE
 from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader
 from utils.get_llm_output import GetLLMGoals
-from torch.utils.data import DataLoader, random_split
-
+from torch.utils.data import DataLoader
 
 def parse_args():
     # configurations
@@ -58,13 +57,13 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         # Determine KL weight
         if kl_annealing:
             if epoch < anneal_start:
-                kl_weight = 0.3
+                kl_weight = 1.0
             elif anneal_start <= epoch <= anneal_end:
-                kl_weight = 0.3*((epoch - anneal_start + 1) / (anneal_end - anneal_start + 1))
+                kl_weight = 1.0*((epoch - anneal_start + 1) / (anneal_end - anneal_start + 1))
             else:
-                kl_weight = 0.3
+                kl_weight = 1.0
         else:
-            kl_weight = 0.3
+            kl_weight = 1.0
 
         for data in pbar:
             data = data.float().to(device)
@@ -85,13 +84,13 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         # Scheduler step
         # scheduler.step(total_loss)
 
-        average_loss = total_loss / len(dataloader)
-        average_recon = total_recon / len(dataloader)
-        average_kl = total_kl / len(dataloader)
+        # average_loss = total_loss / len(dataloader)
+        # average_recon = total_recon / len(dataloader)
+        # average_kl = total_kl / len(dataloader)
         # current_lr = scheduler.get_last_lr()[0]
-        wandb.log({"Total loss" : average_loss,
-                   "Reconstruction loss" : average_recon,
-                   "KL divergence" : average_kl,
+        wandb.log({"Total loss" : total_loss,
+                   "Reconstruction loss" : total_recon,
+                   "KL divergence" : total_kl,
                    "KL weight" : kl_weight}, step = epoch)
         # Save checkpoint at specified intervals
         if epoch % checkpoint_interval == 0 or epoch == epochs:
@@ -115,7 +114,7 @@ def main(args):
 
     # Initialize dataset and dataloader
     dataset = TextDataset(dataset)
-    dataloader = DataLoader(dataset, batch_size=1000, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=500, shuffle=True)
 
     
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
@@ -183,7 +182,7 @@ def main(args):
 
 if __name__ == "__main__":
     args = parse_args()
-    # wandb.init(project="Imagination-VAE_training", config=args)
+    wandb.init(project="Imagination-VAE_training", config=args)
     main(args)
 
 

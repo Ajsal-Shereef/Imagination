@@ -125,3 +125,36 @@ def normalize_data(data):
     std = np.std(data, axis=0)
     normalized_data = (data - mean) / (std + 1e-7)  # Small epsilon to prevent division by zero
     return normalized_data
+
+def monte_carlo_entropy(alpha, mu, sigma, num_samples=10000):
+    """
+    Monte Carlo estimation of entropy for a mixture of Gaussians.
+    
+    Args:
+        alpha (list): Weights of the Gaussian components. Must sum to 1.
+        mu (list): Means of the Gaussian components.
+        sigma (list): Standard deviations of the Gaussian components.
+        num_samples (int): Number of samples to generate for Monte Carlo estimation.
+
+    Returns:
+        float: Estimated entropy of the mixture distribution.
+    """
+    M = len(alpha)  # Number of components in the mixture
+
+    # Step 1: Sample component indices according to the mixture weights alpha
+    component_indices = np.random.choice(M, size=num_samples, p=alpha)
+
+    # Step 2: Generate samples from the corresponding Gaussians
+    samples = np.array([np.random.normal(mu[i], sigma[i]) for i in component_indices])
+
+    # Step 3: Compute the density of each sample under the full mixture distribution
+    mixture_density = np.zeros(num_samples)
+    for i in range(M):
+        # Compute the contribution of the i-th Gaussian to the density of each sample
+        component_density = alpha[i] * norm.pdf(samples, mu[i], sigma[i])
+        mixture_density += component_density
+
+    # Step 4: Compute the entropy using the Monte Carlo estimate
+    entropy = -np.mean(np.log(mixture_density + 1e-10))  # Adding a small constant for numerical stability
+
+    return entropy

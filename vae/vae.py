@@ -4,6 +4,8 @@ import torch.nn.functional as F
 from architectures.mlp import MLP
 from sentence_transformers import SentenceTransformer
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
 
 # =============================
 # 1. Define the VAE Class
@@ -165,6 +167,81 @@ class VAE(nn.Module):
             
         recon = self.decode(z)
         return recon, mu, logvar, weights, z
+    
+    def log_prob_mixture_gaussian(self, x, alpha, mu, sigma):
+        """
+        Compute the log probability of a mixture of Gaussians.
+        x: [batch_size, num_components, num_samples, feature_dim]
+        alpha: [batch_size, num_components] mixture weights
+        mu: [batch_size, num_components, feature_dim] means
+        sigma: [batch_size, num_components, feature_dim] standard deviations
+        """
+        batch_size, num_components, num_samples, feature_dim = x.shape
+
+        # Constants for normalization
+        log_2pi = torch.log(torch.tensor(2 * torch.pi)).to(device)
+        constant = 0.5 * feature_dim * log_2pi
+
+        # Clamping sigma for numerical stability
+        sigma = torch.clamp(sigma, min=1e-6)
+
+        # Compute the quadratic term
+        diff = x - mu.unsqueeze(2)  # [batch_size, num_components, num_samples, feature_dim]
+        quad_term = torch.sum((diff ** 2) / (sigma.unsqueeze(2) ** 2), dim=-1)  # Sum over feature_dim
+
+        # Compute the log probability
+        log_prob_components = (
+            torch.log(alpha).unsqueeze(2)  # Log mixture weights
+            - constant  # Normalization constant
+            - 0.5 * quad_term  # Quadratic term
+            - torch.sum(torch.log(sigma), dim=-1).unsqueeze(2)  # Log std deviation
+        )
+
+        # Use log-sum-exp trick for stability
+        log_prob_mixture = torch.logsumexp(log_prob_components, dim=1)  # Sum over num_components
+        return torch.sum(log_prob_mixture, dim=-1)  # Sum over num_samples
+
+
+    def kl_divergence_approximation(self, alpha_p, mu_p, logsigma_p, num_samples=500):
+        """
+        Approximate the KL divergence between p(x) and g(x) using Monte Carlo sampling.
+
+        Parameters:
+        - alpha_p: Mixture weights for p(x).
+        - mu_p: Means of the Gaussian components for p(x).
+        - logsigma_p: Log of Standard deviations of the Gaussian components for p(x).
+        - mu_g: Means of the Gaussian components for g(x) (fixed sigma = 1).
+        - num_samples: Number of Monte Carlo samples to use for the approximation.
+
+        Returns:
+        - kl_divergence: Approximate KL divergence.
+        """
+        sigma_p = torch.exp(logsigma_p)
+        batch_size, num_components, feature_dim = mu_p.shape
+        
+        # Sample from p(x)
+        z_samples_each_data = mu_p.unsqueeze(2) + sigma_p.unsqueeze(2) * torch.randn(batch_size, num_components, num_samples, feature_dim).to(device)
+
+        # Compute log-probabilities under p(x)
+        log_p_x = self.log_prob_mixture_gaussian(z_samples_each_data, alpha_p, mu_p, sigma_p)
+        
+        if hasattr(self, 'mu_p'):
+            mu_g = self.mu_p  # [num_mixtures, latent_dim]
+            mu_g = mu_p.unsqueeze(0)  # [1, num_mixtures, latent_dim]
+        else:
+            mu_g = self.mu_p_buffer.unsqueeze(0).repeat(z_samples_each_data.shape[0], 1, 1)
+                
+        # Compute log-probabilities under g(x)
+        # Here g(x) is a mixture of Gaussians with unit variance and uniform weights (1/M)
+        alpha_g = (torch.ones(z_samples_each_data.shape[0], z_samples_each_data.shape[1]) / z_samples_each_data.shape[1]).to(device)
+        sigma_g = torch.ones_like(sigma_p)  # All standard deviations are fixed at 1 for g(x)
+
+        log_g_x = self.log_prob_mixture_gaussian(z_samples_each_data, alpha_g, mu_g, sigma_g)
+
+        # Compute KL divergence as expectation of log p(x) - log g(x) over samples from p(x)
+        kl_divergence = log_p_x - log_g_x
+
+        return kl_divergence
 
     def kl_divergence(self, mu, logvar, weights):
         """
@@ -195,7 +272,7 @@ class VAE(nn.Module):
 
         # Weight the KL divergence by mixture weights and sum over mixtures
         if not self.num_mixtures==1:
-            kl = (weights * kl).sum(dim=1)  # [batch]
+            kl = (1/self.num_mixtures * kl).sum(dim=1)  # [batch]
         return kl
     
     def weight_regularisation_loss(self, weight):
@@ -226,19 +303,20 @@ class VAE(nn.Module):
             loss (torch.Tensor): Combined VAE loss.
             recon_loss (torch.Tensor): Reconstruction loss.
             kl_loss (torch.Tensor): KL divergence loss.
+            weight_regualarisation_loss (torch.Tensor): Weight regularisation loss
         """
         # Reconstruction loss: Mean Squared Error
-        recon_loss = F.mse_loss(recon, original, reduction='sum')
+        recon_loss = F.mse_loss(recon, original, reduction='mean')
 
         # KL divergence loss
-        kl = self.kl_divergence(mu, logvar, weights).sum()
+        kl = torch.mean(self.kl_divergence_approximation(weights, mu, logvar))
         
         #Weight regularisation term
-        # weight_regualrisation_loss = self.weight_regularisation_loss(weights)
+        # weight_regualarisation_loss = self.weight_regularisation_loss(weights)
 
         # Total loss with annealed KL weight
-        loss = recon_loss + kl_weight * kl #- weight_regualrisation_loss
-        return loss, recon_loss, kl#, weight_regualrisation_loss
+        loss = recon_loss + kl_weight * kl# - weight_regualarisation_loss
+        return loss, recon_loss, kl#, weight_regualarisation_loss
 
     def save(self, path):
         """
