@@ -22,65 +22,42 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
     if len(all_z) == 0:
         all_z = []
         all_labels = []
-        all_data = []
         with torch.no_grad():
-            for sentences in tqdm(dataloader, desc="Collecting Latent Vectors"):
+            for data in tqdm(dataloader, desc="Collecting Latent Vectors"):
                 # sentences = list(sentences)
-                sentences = sentences.float().to(device)
-                mu, logvar, weights = model.encode(sentences)
-                labels = torch.where(weights[:, 0] > 0.5, 1, 2)
-                z, _, _ = model.reparameterize(mu, logvar, weights)
-                all_z.append(z.cpu().numpy())
+                data = data.float().to(device)
+                # Forward pass
+                inference_out, reconstruction = model(data.float().to(device))
+                labels = torch.argmax(inference_out['categorical'], dim=-1)
+                all_z.append(inference_out['latent'].cpu().numpy())
                 all_labels.append(labels.cpu().numpy())
-                all_data.append(sentences.cpu().numpy())
                 # Optionally, collect labels or other metadata if available
         all_z = np.concatenate(all_z, axis=0)  # [num_samples, latent_dim]
         all_labels = np.concatenate(all_labels, axis=0)
-        all_data = np.concatenate(all_data, axis=0)
     if method == 'pca':
-        reducer = PCA(n_components=2)
+        reducer = PCA(n_components=3)
         reduced_z = reducer.fit_transform(all_z)
         fig_save_name = f'{save_path}/latent_space_pca_{checkpoint}.png'
     elif method == 'tsne':
-        reducer = TSNE(n_components=2, perplexity=40, n_iter=1000)
+        reducer = TSNE(n_components=3, verbose=1, perplexity=40, n_iter=300)
         reduced_z = reducer.fit_transform(all_z)
         fig_save_name = f'{save_path}/latent_space_tsne_{checkpoint}.png'
     else:
         raise ValueError("Method must be 'pca' or 'tsne'.")
-
-    plt.figure(figsize=(8, 6))
-    for label in np.unique(all_labels):
-        plt.scatter(reduced_z[all_labels == label, 0], reduced_z[all_labels == label, 1], label=f'Goal {label}', alpha=0.6)
-    plt.title(f'Latent Space Visualization using {method.upper()}')
-    plt.xlabel('Component 1')
-    plt.ylabel('Component 2')
-    plt.grid(True)
-    plt.legend()
-    plt.savefig(fig_save_name)
-    plt.close()
     
-    # all_data = (all_data-np.mean(all_data))/np.std(all_data)
-    if method == 'pca':
-        reducer = PCA(n_components=2)
-        reduced_z = reducer.fit_transform(all_data)
-        fig_save_name = f'{save_path}/data_space_pca_{checkpoint}.png'
-    elif method == 'tsne':
-        reducer = TSNE(n_components=2, perplexity=40, n_iter=1000)
-        reduced_z = reducer.fit_transform(all_data)
-        fig_save_name = f'{save_path}/latent_space_tsne_{checkpoint}.png'
-    else:
-        raise ValueError("Method must be 'pca' or 'tsne'.")
-
-    plt.figure(figsize=(8, 6))
-    for label in np.unique(all_labels):
-        plt.scatter(reduced_z[all_labels == label, 0], reduced_z[all_labels == label, 1], label=f'Goal {label}', alpha=0.6)
-    plt.title(f'Latent Space Visualization using {method.upper()}')
-    plt.xlabel('Component 1')
-    plt.ylabel('Component 2')
-    plt.grid(True)
-    plt.savefig(fig_save_name)
+    fig = plt.figure(figsize=(16,10))
+    ax = plt.axes(projection='3d')
+    ax.scatter3D(reduced_z[:,0], reduced_z[:,1], reduced_z[:,2], c=all_labels, cmap='tab10')
+    ax.set_title(f'Latent Space Visualization using {method.upper()}')
+    ax.set_xlabel('Component 1')
+    ax.set_ylabel('Component 2')
+    ax.set_zlabel('Component 3')
+    ax.grid(True)
+    ax.legend()
+    fig.savefig(fig_save_name)
+    plt.close(fig)
     
-    print(f"Latent space visualization saved to {save_path}")
+    print(f"Latent space visualization saved to {fig_save_name}")
     return all_z, all_labels
 
 def get_data(datapath):

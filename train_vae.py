@@ -7,7 +7,7 @@ import torch.nn as nn
 import torch.optim as optim
 from tqdm import tqdm
 from utils.utils import *
-from vae.vae import VAE
+from vae.vae import GMVAE
 from sentence_transformers import SentenceTransformer
 from torch.utils.data import DataLoader
 from utils.get_llm_output import GetLLMGoals
@@ -24,7 +24,7 @@ def parse_args():
                         help="which model to use as encoder")
     parser.add_argument("--datapath", default="data/data.pkl",
                         help="Dataset to train the VAE")
-    parser.add_argument("--epoch", default=80000,
+    parser.add_argument("--epoch", default=1000,
                         help="Number of training iterations")
     return parser.parse_args()
     
@@ -33,7 +33,7 @@ def parse_args():
 # =============================
 
 def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
-    epochs=10, kl_annealing=True, anneal_start=1, anneal_end=10, checkpoint_interval=5000):
+    epochs=10, kl_annealing=True, anneal_start=1, anneal_end=10, checkpoint_interval=200):
     """
     Train the VAE model.
 
@@ -69,9 +69,9 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
             data = data.float().to(device)
             optimizer.zero_grad()
             # Forward pass
-            recon, mu, logvar, weights, z = model(data.float().to(device))
+            inference_out, reconstruction = model(data.float().to(device))
             # Compute loss
-            loss, recon_loss, kl = model.loss_function(recon, data, mu, logvar, weights, kl_weight)
+            loss, recon_loss, kl = model.loss_function(data, inference_out, reconstruction, kl_weight)
             # Backward pass and optimization
             loss.backward()
             optimizer.step()
@@ -84,13 +84,13 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         # Scheduler step
         # scheduler.step(total_loss)
 
-        # average_loss = total_loss / len(dataloader)
-        # average_recon = total_recon / len(dataloader)
-        # average_kl = total_kl / len(dataloader)
+        average_loss = total_loss / len(dataloader)
+        average_recon = total_recon / len(dataloader)
+        average_kl = total_kl / len(dataloader)
         # current_lr = scheduler.get_last_lr()[0]
-        wandb.log({"Total loss" : total_loss,
-                   "Reconstruction loss" : total_recon,
-                   "KL divergence" : total_kl,
+        wandb.log({"Total loss" : average_loss,
+                   "Reconstruction loss" : average_recon,
+                   "KL divergence" : average_kl,
                    "KL weight" : kl_weight}, step = epoch)
         # Save checkpoint at specified intervals
         if epoch % checkpoint_interval == 0 or epoch == epochs:
@@ -114,7 +114,7 @@ def main(args):
 
     # Initialize dataset and dataloader
     dataset = TextDataset(dataset)
-    dataloader = DataLoader(dataset, batch_size=500, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=1000, shuffle=True)
 
     
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
@@ -126,30 +126,28 @@ def main(args):
     mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
     # Define prior means (mu_p) for each mixture component
     # Initialize VAE with learnable prior means
-    learn_mu_p = False  # Enable learnable prior means
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     num_mixtures = len(goals)
     
     code_snippet = """
-    vae = VAE(
-        input_dim = dataset[0].shape[0], 
-        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], 
-        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
-        latent_dim=latent_dim, 
-        num_mixtures=num_mixtures, 
-        mu_p=mu_p, 
-        learn_mu_p=learn_mu_p
-    )
-    """
-    wandb.log({"code_snippet": code_snippet})
-    vae = VAE(
+    vae = GMVAE(
         input_dim = dataset[0].shape[0], 
         encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
         decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
         latent_dim=latent_dim, 
         num_mixtures=num_mixtures, 
-        mu_p=mu_p, 
-        learn_mu_p=learn_mu_p
+        mu_p=mu_p
+    )
+    vae.to(device)
+    """
+    wandb.log({"code_snippet": code_snippet})
+    vae = GMVAE(
+        input_dim = dataset[0].shape[0], 
+        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
+        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
+        latent_dim=latent_dim, 
+        num_mixtures=num_mixtures, 
+        mu_p=mu_p
     )
     vae.to(device)
 

@@ -1,7 +1,7 @@
 import os
 import torch
 import numpy as np
-from vae.vae import VAE
+from vae.vae import GMVAE
 from utils.utils import *
 from torch.utils.data import DataLoader
 from utils.get_llm_output import GetLLMGoals
@@ -23,17 +23,15 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     sentencebert = SentenceTransformer(pretrained_model)
     # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
     mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
-    learn_mu_p = False  # Enable learnable prior means
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     num_mixtures = len(goals)
-    vae = VAE(
+    vae = GMVAE(
         input_dim = dataset[0].shape[0], 
-        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], 
+        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
         decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
         latent_dim=latent_dim, 
         num_mixtures=num_mixtures, 
-        mu_p=mu_p, 
-        learn_mu_p=learn_mu_p
+        mu_p=mu_p
     )
     vae.load(vae_checkpoint)
     vae.to(device)
@@ -44,6 +42,6 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     latent = visualize_latent_space(vae, dataloader, device, latent, labels, method='tsne', save_path=data_dir, checkpoint = vae_checkpoint.split("/")[-1])
     
 if __name__ == "__main__":
-    test_vae("models/all-MiniLM-L6-v2/Feature_based/vae_epoch_40000.pth", "all-MiniLM-L6-v2", "data/data.pkl")
+    test_vae("models/all-MiniLM-L6-v2/Feature_based/vae_epoch_1000.pth", "all-MiniLM-L6-v2", "data/data.pkl")
     
     

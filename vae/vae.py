@@ -2,48 +2,115 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from architectures.mlp import MLP
-from sentence_transformers import SentenceTransformer
+from architectures.Layers import *
+from torch.distributions import kl_divergence
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+"""
+------------------------------------------------------------------------------------
+-- InferenceNet class is adapted and modified from Jhosimar George Arias Figueroa
+https://github.com/jariasf/GMVAE/tree/master/pytorch
+------------------------------------------------------------------------------------
+"""
+
+# Inference Network
+class InferenceNet(nn.Module):
+  def __init__(self, x_dim, z_dim, y_dim):
+    """
+    This class implements the inference part of the GMVAE.
+    """
+    super(InferenceNet, self).__init__()
+
+    # q(y|x)
+    self.inference_qyx = torch.nn.ModuleList([
+        nn.Linear(x_dim, 512),
+        nn.ReLU(),
+        nn.Linear(512, 512),
+        nn.ReLU(),
+        GumbelSoftmax(512, y_dim)
+    ])
+
+    # q(z|y,x)
+    self.inference_qzyx = torch.nn.ModuleList([
+        nn.Linear(x_dim + y_dim, 512),
+        nn.ReLU(),
+        nn.Linear(512, 512),
+        nn.ReLU(),
+        Gaussian(512, z_dim)
+    ])
+
+  # q(y|x)
+  def qyx(self, x, temperature, hard):
+    num_layers = len(self.inference_qyx)
+    for i, layer in enumerate(self.inference_qyx):
+      if i == num_layers - 1:
+        #last layer is gumbel softmax
+        x = layer(x, temperature, hard)
+      else:
+        x = layer(x)
+    return x
+
+  # q(z|x,y)
+  def qzxy(self, x, y):
+    concat = torch.cat((x, y), dim=1)  
+    for layer in self.inference_qzyx:
+      concat = layer(concat)
+    return concat
+  
+  def forward(self, x, num_mixture, temperature=1, hard=0):
+    #x = Flatten(x)
+
+    # q(y|x)
+    logits, prob, y = self.qyx(x, temperature, hard)
+    #Invoking the q(z|x,y)
+    mu, logvar, z = self.qzxy(x, y)
+    
+    y_ = torch.zeros([x.shape[0], num_mixture]).to(device)
+    # q(z|x,y)
+    zm, zv = [[None] * num_mixture for i in range(2)]
+    for i in range(num_mixture):
+        y_c = y_ + torch.eye(num_mixture).to(device)[i]
+        mu, logvar, _ = self.qzxy(x, y_c)
+        zm[i] = mu
+        zv[i] = logvar
+
+    output = {'mean': torch.stack(zm, dim=1), 'logvar': torch.stack(zv, dim=1), 'latent': z,
+              'logits': logits, 'prob_cat': prob, 'categorical': y}
+    return output
 
 # =============================
 # 1. Define the VAE Class
 # =============================
 
-class VAE(nn.Module):
-    def __init__(self, input_dim, encoder_hidden, decoder_hidden, latent_dim=128, num_mixtures=5, mu_p=None, learn_mu_p=False):
+class GMVAE(nn.Module):
+    def __init__(self, input_dim, encoder_hidden, decoder_hidden, latent_dim=128, num_mixtures=5, mu_p=None):
         """
-        Variational Autoencoder with a pretrained Sentence-BERT encoder, a mixture of Gaussians in the latent space,
-        and a decoder to reconstruct Sentence-BERT embeddings.
+        Variational Autoencoder with a mixture of Gaussians in the latent space, and a decoder to reconstruct the data.
 
         Args:
-            pretrained_model_name (str): Name of the pretrained Sentence-BERT model.
+            input_dim (int): Dimention of the data
+            encoder_hidden (int): Encoder hidden dimension
+            decoder_hidden (int): Decoder hidden dimension
             latent_dim (int): Dimensionality of the latent space.
             num_mixtures (int): Number of Gaussian components in the mixture.
             mu_p (torch.Tensor or None): Prior means for the Gaussian components. Shape: [num_mixtures, latent_dim]
                                           If None, initializes mu_p as zeros.
-            learn_mu_p (bool): If True, allows mu_p to be learnable parameters.
         """
-        super(VAE, self).__init__()
+        super(GMVAE, self).__init__()
         self.latent_dim = latent_dim
         self.num_mixtures = num_mixtures
-        if mu_p is None:
-            self.num_mixtures = 1
         self.embedding_dim = latent_dim
         
         #Encoder model
         # Define the encoder model with multiple layers
         self.encoder = MLP(input_dim, latent_dim, encoder_hidden)
         
-        # Linear layers to output mixture parameters
-        self.fc_mu = nn.Linear(self.embedding_dim, latent_dim * self.num_mixtures)
-        self.fc_logvar = nn.Linear(self.embedding_dim, latent_dim * self.num_mixtures)
-        if mu_p is not None:
-            self.fc_weights = nn.Linear(self.embedding_dim, self.num_mixtures)
-
-        # Decoder
-        self.decoder = MLP(latent_dim, input_dim, decoder_hidden)
+        #Inference net of the GMVAE
+        self.inference_model = InferenceNet(latent_dim, latent_dim, self.num_mixtures)
+        
+        #Generative net of the VAE
+        self.generative_model = MLP(latent_dim, input_dim, decoder_hidden)
         
         # Apply Xavier initialization to both models
         # self.encoder.apply(self.init_weights)
@@ -53,15 +120,13 @@ class VAE(nn.Module):
         # self.fc_weights.apply(self.init_weights)
 
         # Prior means (mu_p). If not provided, defaults to zero vectors
-        if mu_p is None:
-            mu_p = torch.zeros(self.num_mixtures, latent_dim)
-        else:
-            assert mu_p.shape == (self.num_mixtures, latent_dim), \
+        mu_p.shape == (self.num_mixtures, latent_dim), \
                 f"mu_p must have shape ({self.num_mixtures}, {latent_dim}), but got {mu_p.shape}"
-        if learn_mu_p:
-            self.mu_p = nn.Parameter(mu_p)  # Make mu_p learnable
-        else:
-            self.register_buffer('mu_p_buffer', mu_p)  # Register as buffer to move with device
+                
+        self.register_buffer('mu_p_buffer', mu_p)  # Register as buffer to move with device
+        
+        #This is the prior weight of the gaussin, we weight each gaussian equally
+        self.prior_c = torch.full((self.num_mixtures,), 1.0 / self.num_mixtures).to(device)
             
     # Function to apply Xavier normal initialization
     def init_weights(self, m):
@@ -78,58 +143,11 @@ class VAE(nn.Module):
             x (list of str): Batch of input sentences.
 
         Returns:
-            mu (torch.Tensor): Means of the mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            logvar (torch.Tensor): Log variances of the mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            weights (torch.Tensor): Mixture weights. Shape: [batch_size, num_mixtures]
+            embeddings (torch.Tensor): Embeddigns from the encoder net
         """
         embeddings = self.encoder(x)
         # embeddings: [batch_size, embedding_dim]
-
-        # Compute mixture parameters
-        if not self.num_mixtures==1:
-            mu = self.fc_mu(embeddings).view(-1, self.num_mixtures, self.latent_dim)        # [batch_size, num_mixtures, latent_dim]
-            logvar = self.fc_logvar(embeddings).view(-1, self.num_mixtures, self.latent_dim)  # [batch_size, num_mixtures, latent_dim]
-            weights = F.softmax(self.fc_weights(embeddings), dim=-1)                       # [batch_size, num_mixtures]
-            return mu, logvar, weights
-        else:
-            mu = self.fc_mu(embeddings)
-            logvar = self.fc_logvar(embeddings)
-            return mu, logvar, []
-
-    def reparameterize(self, mu, logvar, weights):
-        """
-        Reparameterization trick to sample from the mixture of Gaussians.
-
-        Args:
-            mu (torch.Tensor): Means of the mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            logvar (torch.Tensor): Log variances of the mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            weights (torch.Tensor): Mixture weights. Shape: [batch_size, num_mixtures]
-
-        Returns:
-            z (torch.Tensor): Sampled latent vectors. Shape: [batch_size, latent_dim]
-            selected_mu (torch.Tensor): Means of the sampled components. Shape: [batch_size, latent_dim]
-            selected_logvar (torch.Tensor): Log variances of the sampled components. Shape: [batch_size, latent_dim]
-        """
-        batch_size = mu.size(0)
-        device = mu.device
-        
-        if not self.num_mixtures==1:
-            # Sample from each Gaussian component
-            eps = torch.randn(batch_size, self.num_mixtures, self.latent_dim).to(device)  # [batch_size, num_mixtures, latent_dim]
-            sigma = torch.exp(0.5 * logvar)  # [batch_size, num_mixtures, latent_dim]
-            z_i = mu + sigma * eps          # [batch_size, num_mixtures, latent_dim]
-
-            # Compute weighted sum: z = sum(alpha_i * z_i)
-            weights = weights.unsqueeze(-1)  # [batch_size, num_mixtures, 1]
-            z = torch.sum(weights * z_i, dim=1)  # [batch_size, latent_dim]
-
-            return z, z_i, weights.squeeze(-1)  # Returning z_i for potential debugging
-        else:
-            # Sample from each Gaussian component
-            eps = torch.randn(batch_size, self.latent_dim).to(device)  # [batch_size, latent_dim]
-            sigma = torch.exp(0.5 * logvar)  # [batch_size, latent_dim]
-            z = mu + sigma * eps          # [batch_size, latent_dim]
-            return z
+        return embeddings
 
     def decode(self, z):
         """
@@ -152,171 +170,66 @@ class VAE(nn.Module):
             x (list of str): Batch of input sentences.
 
         Returns:
-            recon (torch.Tensor): Reconstructed embeddings. Shape: [batch_size, embedding_dim]
-            mu (torch.Tensor): Means of mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            logvar (torch.Tensor): Log variances of mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            weights (torch.Tensor): Mixture weights. Shape: [batch_size, num_mixtures]
-            z (torch.Tensor): Sampled latent vectors. Shape: [batch_size, latent_dim]
+            inference_net_out (Dict): Dictionary containing the output of the Inference net
+            reconstructed_data (torch.Tensor): The reconstructed data from the decoder [batch_size, Feature_dim]
         """
-        if not self.num_mixtures==1:
-            mu, logvar, weights = self.encode(x)
-            z, z_i, weights_expanded = self.reparameterize(mu, logvar, weights)
-        else:
-            mu, logvar, weights = self.encode(x)
-            z = self.reparameterize(mu, logvar, weights)
-            
-        recon = self.decode(z)
-        return recon, mu, logvar, weights, z
+        encoded_data = self.encode(x)
+        inference_net_out = self.inference_model(encoded_data, self.num_mixtures)
+        reconstructed_data = self.generative_model(inference_net_out['latent'])
+        return inference_net_out, reconstructed_data
     
-    def log_prob_mixture_gaussian(self, x, alpha, mu, sigma):
-        """
-        Compute the log probability of a mixture of Gaussians.
-        x: [batch_size, num_components, num_samples, feature_dim]
-        alpha: [batch_size, num_components] mixture weights
-        mu: [batch_size, num_components, feature_dim] means
-        sigma: [batch_size, num_components, feature_dim] standard deviations
-        """
-        batch_size, num_components, num_samples, feature_dim = x.shape
-
-        # Constants for normalization
-        log_2pi = torch.log(torch.tensor(2 * torch.pi)).to(device)
-        constant = 0.5 * feature_dim * log_2pi
-
-        # Clamping sigma for numerical stability
-        sigma = torch.clamp(sigma, min=1e-6)
-
-        # Compute the quadratic term
-        diff = x - mu.unsqueeze(2)  # [batch_size, num_components, num_samples, feature_dim]
-        quad_term = torch.sum((diff ** 2) / (sigma.unsqueeze(2) ** 2), dim=-1)  # Sum over feature_dim
-
-        # Compute the log probability
-        log_prob_components = (
-            torch.log(alpha).unsqueeze(2)  # Log mixture weights
-            - constant  # Normalization constant
-            - 0.5 * quad_term  # Quadratic term
-            - torch.sum(torch.log(sigma), dim=-1).unsqueeze(2)  # Log std deviation
-        )
-
-        # Use log-sum-exp trick for stability
-        log_prob_mixture = torch.logsumexp(log_prob_components, dim=1)  # Sum over num_components
-        return torch.sum(log_prob_mixture, dim=-1)  # Sum over num_samples
-
-
-    def kl_divergence_approximation(self, alpha_p, mu_p, logsigma_p, num_samples=500):
-        """
-        Approximate the KL divergence between p(x) and g(x) using Monte Carlo sampling.
-
-        Parameters:
-        - alpha_p: Mixture weights for p(x).
-        - mu_p: Means of the Gaussian components for p(x).
-        - logsigma_p: Log of Standard deviations of the Gaussian components for p(x).
-        - mu_g: Means of the Gaussian components for g(x) (fixed sigma = 1).
-        - num_samples: Number of Monte Carlo samples to use for the approximation.
-
-        Returns:
-        - kl_divergence: Approximate KL divergence.
-        """
-        sigma_p = torch.exp(logsigma_p)
-        batch_size, num_components, feature_dim = mu_p.shape
-        
-        # Sample from p(x)
-        z_samples_each_data = mu_p.unsqueeze(2) + sigma_p.unsqueeze(2) * torch.randn(batch_size, num_components, num_samples, feature_dim).to(device)
-
-        # Compute log-probabilities under p(x)
-        log_p_x = self.log_prob_mixture_gaussian(z_samples_each_data, alpha_p, mu_p, sigma_p)
-        
-        if hasattr(self, 'mu_p'):
-            mu_g = self.mu_p  # [num_mixtures, latent_dim]
-            mu_g = mu_p.unsqueeze(0)  # [1, num_mixtures, latent_dim]
-        else:
-            mu_g = self.mu_p_buffer.unsqueeze(0).repeat(z_samples_each_data.shape[0], 1, 1)
-                
-        # Compute log-probabilities under g(x)
-        # Here g(x) is a mixture of Gaussians with unit variance and uniform weights (1/M)
-        alpha_g = (torch.ones(z_samples_each_data.shape[0], z_samples_each_data.shape[1]) / z_samples_each_data.shape[1]).to(device)
-        sigma_g = torch.ones_like(sigma_p)  # All standard deviations are fixed at 1 for g(x)
-
-        log_g_x = self.log_prob_mixture_gaussian(z_samples_each_data, alpha_g, mu_g, sigma_g)
-
-        # Compute KL divergence as expectation of log p(x) - log g(x) over samples from p(x)
-        kl_divergence = log_p_x - log_g_x
-
-        return kl_divergence
-
-    def kl_divergence(self, mu, logvar, weights):
+    def kl_divergence_loss(self, inference_out):
         """
         Compute the KL divergence between the approximate posterior and the prior.
 
         Args:
-            mu (torch.Tensor): Means of mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            logvar (torch.Tensor): Log variances of mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            weights (torch.Tensor): Mixture weights. Shape: [batch_size, num_mixtures]
-
+            inference_out (torch.Tensor): Dictionary containing all information from inference net of the GMVAE
         Returns:
             kl (torch.Tensor): KL divergence for each sample. Shape: [batch_size]
         """
-        # If mu_p is learnable, use self.mu_p, else use buffer
         if hasattr(self, 'mu_p'):
             mu_p = self.mu_p  # [num_mixtures, latent_dim]
             mu_p = mu_p.unsqueeze(0)  # [1, num_mixtures, latent_dim]
         else:
-            if not self.num_mixtures==1:
-                mu_p = self.mu_p_buffer.unsqueeze(0)  # [1, num_mixtures, latent_dim]
-            else:
-                mu_p = self.mu_p_buffer
-
+            mu_p = self.mu_p_buffer.unsqueeze(0)
         # Compute KL divergence for each component and each latent dimension
-        # KL(N(mu_i, sigma_i^2) || N(mu_p_i, I)) = 0.5 * (sigma_i^2 + (mu_p_i - mu_i)^2 - 1 - log(sigma_i^2))
-        kl = 0.5 * (torch.exp(logvar) + (mu_p - mu)**2 - 1 - logvar)  # [batch, num_mixtures, latent_dim]
-        kl = kl.sum(dim=-1)  # Sum over latent dimensions: [batch, num_mixtures]
+        kl_divergence = [[0] for i in range(self.num_mixtures)]
+        for i in range(self.num_mixtures):
+            #KL divergence between two gaussian is given by below formula. The second gaussian variance is identity matrix
+            # KL(N(mu_i, sigma_i^2) || N(mu_p_i, I)) = 0.5 * (sigma_i^2 + (mu_p_i - mu_i)^2 - 1 - log(sigma_i^2))
+            kl = 0.5 * (torch.exp(inference_out['logvar'][:,i,:]) + (inference_out['mean'][:,i,:] - mu_p[:,i,:])**2 - 1 - inference_out['logvar'][:,i,:])  # [batch, num_mixtures, latent_dim]
+            kl = kl.sum(dim=-1)  # Sum over latent dimensions: [batch, num_mixtures]
+            kl_divergence[i] = kl
+        #The full KL divergence of gaussian mixture model contain two parts
+        #E_q(c|x)[KL(q(z|x,c))||p(z|c)] + KL(q(c|x)||p(c))
+        kl_z = torch.sum(torch.stack(kl_divergence, dim=-1)*inference_out['prob_cat'], dim=-1)
+        kl_c = torch.sum(inference_out['prob_cat'] * torch.log(inference_out['prob_cat'] / self.prior_c.unsqueeze(dim=0)), dim=-1)
+        return kl_z + kl_c
 
-        # Weight the KL divergence by mixture weights and sum over mixtures
-        if not self.num_mixtures==1:
-            kl = (1/self.num_mixtures * kl).sum(dim=1)  # [batch]
-        return kl
-    
-    def weight_regularisation_loss(self, weight):
-        """
-        Forces VAE to equally weight the given gaussians
-        
-        Args:
-            weight (torch.Tensor): Weight learned from the VAE model
-            
-        Returns:
-            loss (torch.Tensor): Weight regularisation loss
-        """
-        return -torch.sum(weight * torch.log(weight + 1e-9))
-
-    def loss_function(self, recon, original, mu, logvar, weights, kl_weight):
+    def loss_function(self, data, inference_out, reconstruction, kl_weight):
         """
         Compute the VAE loss function.
 
         Args:
-            recon (torch.Tensor): Reconstructed embeddings. Shape: [batch_size, embedding_dim]
-            original (torch.Tensor): Original embeddings. Shape: [batch_size, embedding_dim]
-            mu (torch.Tensor): Means of mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            logvar (torch.Tensor): Log variances of mixture components. Shape: [batch_size, num_mixtures, latent_dim]
-            weights (torch.Tensor): Mixture weights. Shape: [batch_size, num_mixtures]
+            data (torch.Tensor): Original data [batch_size, Feature_dim]
+            inference_out (torch.Tensor): Dictionary containing all information from inference net of the GMVAE
+            reconstruction (torch.Tensor): The reconstructed data from the decoder [batch_size, Feature_dim]
             kl_weight (float): Weight for the KL divergence term (for annealing).
 
         Returns:
             loss (torch.Tensor): Combined VAE loss.
             recon_loss (torch.Tensor): Reconstruction loss.
             kl_loss (torch.Tensor): KL divergence loss.
-            weight_regualarisation_loss (torch.Tensor): Weight regularisation loss
         """
         # Reconstruction loss: Mean Squared Error
-        recon_loss = F.mse_loss(recon, original, reduction='mean')
+        recon_loss = F.mse_loss(reconstruction, data, reduction='sum')
 
         # KL divergence loss
-        kl = torch.mean(self.kl_divergence_approximation(weights, mu, logvar))
-        
-        #Weight regularisation term
-        # weight_regualarisation_loss = self.weight_regularisation_loss(weights)
+        kl = torch.sum(self.kl_divergence_loss(inference_out))
 
         # Total loss with annealed KL weight
-        loss = recon_loss + kl_weight * kl# - weight_regualarisation_loss
-        return loss, recon_loss, kl#, weight_regualarisation_loss
+        loss = recon_loss + kl_weight * kl
+        return loss, recon_loss, kl
 
     def save(self, path):
         """
