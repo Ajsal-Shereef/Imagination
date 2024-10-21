@@ -4,14 +4,13 @@ import torch
 import argparse
 import numpy as np
 import torch.nn as nn
-import torch.optim as optim
 from tqdm import tqdm
 from utils.utils import *
 from vae.vae import GMVAE
-from sentence_transformers import SentenceTransformer
+import torch.optim as optim
 from torch.utils.data import DataLoader
 from utils.get_llm_output import GetLLMGoals
-from torch.utils.data import DataLoader
+from sentence_transformers import SentenceTransformer
 
 def parse_args():
     # configurations
@@ -105,8 +104,6 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
 
 def main(args):
     dataset = get_data(args.datapath)
-    train_size = int(0.8 * len(dataset))
-    val_size = len(dataset) - train_size
     # dataset = normalize_data(dataset)
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -115,8 +112,7 @@ def main(args):
     # Initialize dataset and dataloader
     dataset = TextDataset(dataset)
     dataloader = DataLoader(dataset, batch_size=1000, shuffle=True)
-
-    
+        
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
     goal_gen = GetLLMGoals()
     goals = goal_gen.llmGoals([])

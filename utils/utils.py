@@ -1,3 +1,5 @@
+import os
+import cv2
 import torch
 import numpy as np
 import matplotlib.pyplot as plt
@@ -135,3 +137,42 @@ def monte_carlo_entropy(alpha, mu, sigma, num_samples=10000):
     entropy = -np.mean(np.log(mixture_density + 1e-10))  # Adding a small constant for numerical stability
 
     return entropy
+
+def collect_random(env, dataset, num_samples=200):
+    state, info = env.reset()
+    for _ in range(num_samples):
+        action = env.action_space.sample()
+        next_state, reward, truncated, terminated, _ = env.step(action)
+        done = truncated + terminated
+        dataset.add(state, action, reward, next_state, done)
+        state = next_state
+        if done:
+            state, info = env.reset()
+            
+def write_video(frames, episode, dump_dir, frameSize = (256, 256)):
+    os.makedirs(dump_dir, exist_ok=True)
+    video = cv2.VideoWriter(dump_dir + '/{}.avi'.format(episode),cv2.VideoWriter_fourcc(*'DIVX'), 1, frameSize, isColor=True)
+    for img in frames:
+        video.write(img)
+    video.release()
+            
+def test(config, env, agent, save_dir, n_episode=5):
+    for i_episode in range(int(n_episode)):
+        frame_array = []
+        state, info = env.reset()
+        frame = env.get_frame()
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frame_array.append(frame)
+        done = False
+        score = 0
+        episode_step = 0
+        while not done:
+            action = agent.get_action(state)
+            next_state, reward, terminated, truncated, info = env.step(action)
+            done = terminated + truncated
+            frame = env.get_frame()
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame_array.append(frame)
+            state = next_state
+
+        write_video(frame_array, i_episode, save_dir)

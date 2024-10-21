@@ -140,7 +140,6 @@ class Linear(nn.Module):
 
         self.linear_layer = nn.Linear(in_dim, out_dim)
         nn.init.xavier_uniform_(self.linear_layer.weight)
-        self.batch_norm = nn.BatchNorm1d(out_dim)
         self.dropout_layer = nn.Dropout(dropout_prob)
         self.post_activation = post_activation
 
@@ -151,7 +150,6 @@ class Linear(nn.Module):
         :return: torch.Tensor
         """
         x = self.linear_layer(x)
-        x = self.batch_norm(x)
         x = self.post_activation(x)
         x = self.dropout_layer(x)
         return x    

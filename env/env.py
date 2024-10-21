@@ -1,4 +1,5 @@
 import numpy as np
+from gymnasium import spaces
 from minigrid.core.constants import COLOR_NAMES, OBJECT_TO_IDX, COLOR_TO_IDX, STATE_TO_IDX
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
@@ -176,6 +177,7 @@ class SimplePickup(MiniGridEnv):
             max_steps=max_steps,
             **kwargs,
         )
+        self.observation_space = spaces.Box(low=0, high=1, shape=(504,), dtype=np.float32)
 
     @staticmethod
     def _gen_mission():
@@ -221,8 +223,13 @@ class SimplePickup(MiniGridEnv):
 
         self.mission = "Pick the green ball"
         
+    def reset(self):
+        obs, info = super().reset()
+        return preprocess_observation(obs), info
+        
     def step(self, action):
         obs, reward, terminated, truncated, info = super().step(action)
+        obs = preprocess_observation(obs)
 
         # Check if the agent has picked up the goal object (e.g., the ball)
         if isinstance(self.carrying, Ball) and self.carrying.color == 'green':

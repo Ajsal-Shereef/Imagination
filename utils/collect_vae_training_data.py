@@ -204,7 +204,7 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     for episode in range(1, episodes + 1):
         state, info = env.reset()
         #caption = state_captioner.generate_caption(state)
-        state = preprocess_observation(state)
+        # state = preprocess_observation(state)
         data.append(state)
         done = False
         step = 0
@@ -219,7 +219,7 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             done = terminated + truncated
             
             #Get the caption
-            next_state = preprocess_observation(next_state)
+            # next_state = preprocess_observation(next_state)
             # Store the transition
             data.append(next_state)
             
