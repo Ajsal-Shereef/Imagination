@@ -35,6 +35,7 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     )
     vae.load(vae_checkpoint)
     vae.to(device)
+    vae.eval()
     # Visualization of the latent space 
     data_dir = f'visualizations/{pretrained_model}/Feature_based'
     os.makedirs(data_dir, exist_ok=True)
@@ -42,6 +43,6 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     latent = visualize_latent_space(vae, dataloader, device, latent, labels, method='tsne', save_path=data_dir, checkpoint = vae_checkpoint.split("/")[-1])
     
 if __name__ == "__main__":
-    test_vae("models/all-MiniLM-L6-v2/Feature_based/vae_epoch_1000.pth", "all-MiniLM-L6-v2", "data/data.pkl")
+    test_vae("models/all-MiniLM-L6-v2/Feature_based/vae_normal.pth", "all-MiniLM-L6-v2", "data/data.pkl")
     
     

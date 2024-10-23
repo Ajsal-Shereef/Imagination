@@ -250,4 +250,4 @@ class GMVAE(nn.Module):
         """
         self.load_state_dict(torch.load(path, map_location=self.mu_p_buffer.device))
         self.eval()
-        print(f"Model loaded from {path}")
+        print(f"VAE Model loaded from {path}")

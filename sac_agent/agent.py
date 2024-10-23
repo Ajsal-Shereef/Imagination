@@ -78,11 +78,14 @@ class SAC(nn.Module):
         
     def get_action(self, state):
         """Returns actions for given state as per current policy."""
-        state = torch.from_numpy(state).float().to(self.device)
-        
+        if not isinstance(state, torch.Tensor):
+            state = torch.from_numpy(state).float().to(self.device)
         with torch.no_grad():
             action = self.actor_local.get_det_action(state)
-        return action.item()
+        if len(action) != 1:
+            return action
+        else:
+            return action.item()
 
     def calc_policy_loss(self, states, alpha):
         _, action_probs, log_pis = self.actor_local.evaluate(states)
@@ -183,16 +186,7 @@ class SAC(nn.Module):
         self.critic1_target.load_state_dict(self.critic1.state_dict())
         self.critic2_target.load_state_dict(self.critic2.state_dict())
         
-        self.previous_actor.load_state_dict(params["actor"])
-        self.previous_critic1.load_state_dict(params["critic1"])
-        self.previous_critic2.load_state_dict(params["critic2"])
-        for params0, params1, params2 in zip(self.previous_actor.parameters(),
-                                             self.previous_critic1.parameters(),
-                                             self.previous_critic2.parameters()):
-            params0.requires_grad = False
-            params1.requires_grad = False
-            params2.requires_grad = False
-        print("[INFO] loaded the model", path)
+        print("[INFO] loaded the SAC model", path)
 
     def save(self, dump_dir, save_name):
         """Save model and optimizer parameters."""

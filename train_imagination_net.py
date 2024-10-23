@@ -1,37 +1,90 @@
+import yaml
 import torch
 import wandb
 import argparse
 import gymnasium
 import numpy as np
+from tqdm import tqdm
 from utils.utils import *
 from vae.vae import GMVAE
+import torch.optim as optim
 from sac_agent.agent import SAC
 from torch.utils.data import DataLoader
 from utils.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
+from imagination.imagination_net import ImaginationNet
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def parse_args():
     # configurations
     parser = argparse.ArgumentParser(description="Train VAE")
     parser.add_argument("--env", type=str, default="SimplePickup",
                         help="Environement to use")
-    parser.add_argument("--use_logger", dest="use_logger", default=True,
-                        help="whether store the results in logger")
+    parser.add_argument("--max_ep_len", type=int, default=20, help="Number of timestep within an episode")
     parser.add_argument("--encoder_model", default="all-MiniLM-L6-v2",
                         help="which model to use as encoder")
     parser.add_argument("--datapath", default="data/data.pkl",
                         help="Dataset to train the imagination net")
+    parser.add_argument("--imagination_net_config", default="config/imagination_net.yaml",
+                        help="Imagination net config directory")
     parser.add_argument("--vae_checkpoint", default="models/all-MiniLM-L6-v2/Feature_based/vae_epoch_1000.pth",
                         help="VAE checkpoint path")
     parser.add_argument("--sac_agent_checkpoint", default="models/sac_agent/SAC_discrete.tar",
                         help="SAC agent checkpoint path")
-    parser.add_argument("--epoch", default=1000,
-                        help="Number of training iterations")
     parser.add_argument("--buffer_size", type=int, default=3000_00, help="Maximal training dataset size, default: 100_000")
     return parser.parse_args()
 
-def train_iamgination_net(vae, sac_agent, dataloader, checkpoint_interval, checkpoint_dir):
-    pass
+def train_imagination_net(config, 
+                          vae, 
+                          sac_agent, 
+                          dataloader, 
+                          checkpoint_interval, 
+                          checkpoint_dir,
+                          input_dim,
+                          num_goals):
+    hidden_layers = config['hidden_layers']
+    imagination_net = ImaginationNet(input_dim = input_dim,
+                                     hidden_layers = hidden_layers,
+                                     num_goals = num_goals,
+                                     vae = vae,
+                                     sac = sac_agent).to(device)
+    #Creating the optimizer
+    optimizer = optim.Adam(imagination_net.parameters(), lr=config['lr'])
+    for epoch in range(config['epoch']):
+        total_loss = 0
+        total_class_loss = 0
+        total_policy_loss = 0
+        total_proximity_loss = 0
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{config['epoch']}")
+        for batch in pbar:
+            data = batch.float().to(device)
+            optimizer.zero_grad()
+            loss, class_loss, policy_loss, proximity_loss  = imagination_net.compute_loss(data)
+            loss.backward()
+            optimizer.step()
+            # Accumulate losses
+            total_loss += loss.item()
+            total_class_loss += class_loss.item()
+            total_policy_loss += policy_loss.item()
+            total_proximity_loss += proximity_loss.item()
+            pbar.set_postfix({'Loss': loss.item(), 'Class loss': class_loss.item(), 'Policy loss': policy_loss.item(), 'Proximity loss': proximity_loss.item()})
+            
+        average_loss = total_loss / len(dataloader)
+        average_class_loss = total_class_loss / len(dataloader)
+        average_policy_loss = total_policy_loss / len(dataloader)
+        average_proximity_loss = total_proximity_loss / len(dataloader)
+        # current_lr = scheduler.get_last_lr()[0]
+        wandb.log({"Total loss" : average_loss,
+                   "Class loss" : average_class_loss,
+                   "Policy loss" : average_policy_loss,
+                   "Proximity loss" : average_proximity_loss}, step = epoch)
+        # Save checkpoint at specified intervals
+        if epoch % checkpoint_interval == 0 or epoch == config['epoch']:
+            checkpoint_path = os.path.join(checkpoint_dir, f'imagination_net_epoch_{epoch}.pth')
+            imagination_net.save(checkpoint_path)
+        # print(f"Epoch {epoch}/{epochs} - Loss: {average_loss:.4f}, Recon Loss: {average_recon:.4f}, KL Divergence: {average_kl:.4f}, KL Weight: {kl_weight:.4f}")
+    print("Training complete.")
 
 def main(args):
     dataset = get_data(args.datapath)
@@ -42,10 +95,14 @@ def main(args):
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
+    
+    # Load the config file for imagination_net
+    with open('config/imagination_net.yaml', 'r') as file:
+        imagination_config = yaml.safe_load(file)
 
     # Initialize dataset and dataloader
     dataset = TextDataset(dataset)
-    dataloader = DataLoader(dataset, batch_size=1000, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=imagination_config['batch_size'], shuffle=True)
         
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
     goal_gen = GetLLMGoals()
@@ -80,4 +137,23 @@ def main(args):
                     buffer_size = args.buffer_size)
     #Loading the pretrained weight of sac agent. The SAC agent weights are already freezed while loading
     sac_agent.load_params(args.sac_agent_checkpoint)
+    
+    # Create data directory if it doesn't exist
+    model_dir = 'models/imagination_net'
+    os.makedirs(model_dir, exist_ok=True)
+    
+    #Train imagination Net
+    train_imagination_net(config = imagination_config, 
+                          vae = vae, 
+                          sac_agent = sac_agent, 
+                          dataloader = dataloader, 
+                          checkpoint_interval = 200, 
+                          checkpoint_dir = model_dir,
+                          input_dim = env.observation_space.shape[0],
+                          num_goals = len(goals))
+    
+if __name__ == "__main__":
+    args = parse_args()
+    wandb.init(project="Imagination-net_training", config=args)
+    main(args)
     
