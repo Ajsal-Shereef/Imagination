@@ -31,6 +31,8 @@ class ImaginationNet(nn.Module):
         self.sac_agent = sac
         self.sac_agent.eval()
         self.num_goals = num_goals
+        self.ce_loss = nn.CrossEntropyLoss(reduction='sum')
+        self.mse_loss = nn.MSELoss(reduction='sum')
     
     # Loss function: 
     def compute_loss(self, state, m=1):
@@ -47,8 +49,10 @@ class ImaginationNet(nn.Module):
         Returns:
             Tensor: Computed loss.
         """
-        self.eval()
         imaginated_state = self(state)
+        q1_original = self.sac_agent.critic1(state)
+        q2_original = self.sac_agent.critic2(state)
+        q_values_original = torch.min(q1_original,q2_original)
         total_loss = 0.0
         class_loss = 0.0
         policy_loss = 0.0
@@ -62,21 +66,19 @@ class ImaginationNet(nn.Module):
             class_prob = inference_out["categorical"] #Class probabilities from VAE
             one_hot_i = torch.zeros_like(class_prob)
             one_hot_i[:, i] = 1  # One-hot vector with 1 at the i-th position
-            ce_loss_vae = F.cross_entropy(class_prob, one_hot_i)
+            ce_loss_vae = self.ce_loss(class_prob, one_hot_i)
 
             # 2. L2 distance between imagined state and input state
-            l2_loss = F.mse_loss(imagined_state, state)
+            l2_loss = self.mse_loss(imagined_state, state)
 
             # 3. Cross-entropy between SAC policy and one-hot vector of action taken
             q1 = self.sac_agent.critic1(imagined_state)
             q2 = self.sac_agent.critic2(imagined_state)
             q_values = torch.min(q1,q2)
-            policy_imagined = F.softmax(q_values, dim=-1)  # Softmax to get policy distribution
-            sac_action = self.sac_agent.get_action(state).to(device) #Get the action taken by the agent in the original state
-            one_hot_action = torch.zeros_like(policy_imagined)
-            one_hot_action.scatter_(1, sac_action.unsqueeze(1), 1)  # One-hot for action taken
+            # one_hot_action = torch.zeros_like(policy_imagined)
+            # one_hot_action.scatter_(1, sac_action.unsqueeze(1), 1)  # One-hot for action taken
 
-            ce_loss_policy = F.cross_entropy(policy_imagined, one_hot_action)
+            ce_loss_policy = self.mse_loss(q_values, q_values_original)
 
             # Total loss for this imagined state
             total_loss += ce_loss_vae + l2_loss + ce_loss_policy * m
@@ -86,7 +88,6 @@ class ImaginationNet(nn.Module):
             proximity_loss += l2_loss
             
         # Return the average loss across all N imagined states
-        self.train()
         return total_loss, class_loss, policy_loss, proximity_loss 
         
     def forward(self,state):

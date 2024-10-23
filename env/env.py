@@ -223,13 +223,48 @@ class SimplePickup(MiniGridEnv):
 
         self.mission = "Pick the green ball"
         
+    def extract_objects_from_observation(self):
+        """
+        Extracts the objects present in the partial observation, excluding empty tiles and walls.
+
+        Args:
+            observation (numpy array): Observation from the MiniGrid environment, shape (view_size, view_size, 3).
+
+        Returns:
+            Set: A set containing strings that describe the objects with their colors.
+        """
+        objects_seen = set()
+
+        # Create reverse dictionaries to map indices back to object and color names
+        IDX_TO_OBJECT = {v: k for k, v in OBJECT_TO_IDX.items()}
+        IDX_TO_COLOR = {v: k for k, v in COLOR_TO_IDX.items()}
+
+        # Iterate through the observation grid (view_size x view_size)
+        for i in range(self.obs['image'].shape[0]):
+            for j in range(self.obs['image'].shape[1]):
+                # Extract object type, color, and state from the last dimension
+                obj_type_code = self.obs['image'][i, j, 0]
+                obj_color_code = self.obs['image'][i, j, 1]
+                obj_state = self.obs['image'][i, j, 2]  # State is currently unused but available
+
+                # Map the codes to their respective descriptions
+                obj_type = IDX_TO_OBJECT.get(obj_type_code, 'unknown')
+                obj_color = IDX_TO_COLOR.get(obj_color_code, 'unknown')
+
+                # Filter out 'empty' and 'wall' objects
+                if obj_type not in ['empty', 'wall']:
+                    object_description = f"{obj_color} {obj_type}"
+                    objects_seen.add(object_description)
+
+        return objects_seen
+        
     def reset(self):
         obs, info = super().reset()
         return preprocess_observation(obs), info
         
     def step(self, action):
-        obs, reward, terminated, truncated, info = super().step(action)
-        obs = preprocess_observation(obs)
+        self.obs, reward, terminated, truncated, info = super().step(action)
+        obs = preprocess_observation(self.obs)
 
         # Check if the agent has picked up the goal object (e.g., the ball)
         if isinstance(self.carrying, Ball) and self.carrying.color == 'green':

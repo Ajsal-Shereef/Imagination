@@ -9,6 +9,7 @@ from utils.utils import *
 from vae.vae import GMVAE
 import torch.optim as optim
 from sac_agent.agent import SAC
+import torch.nn.utils as nn_utils
 from torch.utils.data import DataLoader
 from utils.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
@@ -49,8 +50,10 @@ def train_imagination_net(config,
                                      num_goals = num_goals,
                                      vae = vae,
                                      sac = sac_agent).to(device)
+    wandb.watch(imagination_net)
     #Creating the optimizer
     optimizer = optim.Adam(imagination_net.parameters(), lr=config['lr'])
+    # nn_utils.clip_grad_norm_(imagination_net.parameters(), max_norm=config['max_gradient'])
     for epoch in range(config['epoch']):
         total_loss = 0
         total_class_loss = 0
@@ -135,8 +138,11 @@ def main(args):
                     action_size = env.action_space.n,
                     device=device,
                     buffer_size = args.buffer_size)
-    #Loading the pretrained weight of sac agent. The SAC agent weights are already freezed while loading
+    #Loading the pretrained weight of sac agent.
     sac_agent.load_params(args.sac_agent_checkpoint)
+    #Freezing the SAC agent weight to prevent updating
+    for params in sac_agent.parameters():
+        params.requires_grad = False
     
     # Create data directory if it doesn't exist
     model_dir = 'models/imagination_net'

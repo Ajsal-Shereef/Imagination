@@ -29,7 +29,7 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
                 # sentences = list(sentences)
                 data = data.float().to(device)
                 # Forward pass
-                inference_out, reconstruction = model(data.float().to(device))
+                inference_out, reconstruction = model(data)
                 labels = torch.argmax(inference_out['categorical'], dim=-1)
                 all_z.append(inference_out['latent'].cpu().numpy())
                 all_labels.append(labels.cpu().numpy())

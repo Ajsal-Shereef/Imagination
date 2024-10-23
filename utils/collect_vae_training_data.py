@@ -217,7 +217,6 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             
             next_state, reward, terminated, truncated, info = env.step(action)
             done = terminated + truncated
-            
             #Get the caption
             # next_state = preprocess_observation(next_state)
             # Store the transition

@@ -1,4 +1,5 @@
 lr : 0.001
 batch_size: 1000
-hidden_layers : [512, 1024, 1024, 2048]
-epoch : 10000
+hidden_layers : [512, 512, 512, 1024, 1024, 1024, 2048, 2048, 2048]
+epoch : 80000
+max_gradient : 10
