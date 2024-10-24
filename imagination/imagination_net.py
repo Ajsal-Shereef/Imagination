@@ -63,7 +63,7 @@ class ImaginationNet(nn.Module):
             imagined_state = imaginated_state[:, i, :]
             # 1. Cross-entropy between VAE output and one-hot vector for Gaussian component i
             inference_out, _ = self.vae(imagined_state) #Forward pass through VAE
-            class_prob = inference_out["categorical"] #Class probabilities from VAE
+            class_prob = inference_out["prob_cat"] #Class probabilities from VAE
             one_hot_i = torch.zeros_like(class_prob)
             one_hot_i[:, i] = 1  # One-hot vector with 1 at the i-th position
             ce_loss_vae = self.ce_loss(class_prob, one_hot_i)

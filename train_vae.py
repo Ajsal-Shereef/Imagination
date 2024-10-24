@@ -1,7 +1,7 @@
 import os
+import hydra
 import wandb
 import torch
-import argparse
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
@@ -9,24 +9,11 @@ from utils.utils import *
 from vae.vae import GMVAE
 import torch.optim as optim
 from torch.utils.data import DataLoader
+from omegaconf import DictConfig, OmegaConf
 from utils.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
 
-def parse_args():
-    # configurations
-    parser = argparse.ArgumentParser(description="Train VAE")
-    parser.add_argument("--env", type=str, default="SimplePickup",
-                        help="Environement to use")
-    parser.add_argument("--use_logger", dest="use_logger", default=True,
-                        help="whether store the results in logger")
-    parser.add_argument("--encoder_model", default="all-MiniLM-L6-v2",
-                        help="which model to use as encoder")
-    parser.add_argument("--datapath", default="data/data.pkl",
-                        help="Dataset to train the VAE")
-    parser.add_argument("--epoch", default=1000,
-                        help="Number of training iterations")
-    return parser.parse_args()
-    
+
 # =============================
 # 1. Training Function
 # =============================
@@ -51,6 +38,7 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         total_loss = 0
         total_recon = 0
         total_kl = 0
+        total_caption = 0
         pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{epochs}")
         
         # Determine KL weight
@@ -64,13 +52,13 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         else:
             kl_weight = 1.0
 
-        for data in pbar:
+        for data, caption in pbar:
             data = data.float().to(device)
             optimizer.zero_grad()
             # Forward pass
-            inference_out, reconstruction = model(data.float().to(device))
+            inference_out, reconstruction = model(data)
             # Compute loss
-            loss, recon_loss, kl = model.loss_function(data, inference_out, reconstruction, kl_weight)
+            loss, recon_loss, kl = model.loss_function(data, caption, inference_out, reconstruction, kl_weight)
             # Backward pass and optimization
             loss.backward()
             optimizer.step()
@@ -78,6 +66,7 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
             total_loss += loss.item()
             total_recon += recon_loss.item()
             total_kl += kl.item()
+            # total_caption += caption_loss.item()
             pbar.set_postfix({'Loss': loss.item(), 'Recon': recon_loss.item(), 'KL': kl.item(), 'KL Weight': kl_weight})
         
         # Scheduler step
@@ -86,6 +75,7 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         average_loss = total_loss / len(dataloader)
         average_recon = total_recon / len(dataloader)
         average_kl = total_kl / len(dataloader)
+        # average_caption_loss = total_caption / len(dataloader)
         # current_lr = scheduler.get_last_lr()[0]
         wandb.log({"Total loss" : average_loss,
                    "Reconstruction loss" : average_recon,
@@ -102,45 +92,38 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
 # 2. Training VAE
 # =============================
 
-def main(args):
-    dataset = get_data(args.datapath)
+@hydra.main(version_base=None, config_path="config", config_name="vae")
+def main(args: DictConfig) -> None:
+    # Log the configuration
+    wandb.config.update(OmegaConf.to_container(args, resolve=True))
+    
+    #Loading the dataset
+    dataset = get_data(f'{args.General.datapath}/{args.General.encoder_model}/data.pkl')
+    captions = get_data(f'{args.General.datapath}/{args.General.encoder_model}/captions.pkl')
     # dataset = normalize_data(dataset)
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
 
     # Initialize dataset and dataloader
-    dataset = TextDataset(dataset)
-    dataloader = DataLoader(dataset, batch_size=1000, shuffle=True)
+    data = TwoListDataset(dataset, captions)
+    dataloader = DataLoader(data, batch_size=1000, shuffle=True)
         
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
     goal_gen = GetLLMGoals()
     goals = goal_gen.llmGoals([])
     # Load the sentecebert model to get the embedding of the goals from the LLM
-    sentencebert = SentenceTransformer(args.encoder_model)
+    sentencebert = SentenceTransformer(args.General.encoder_model)
     # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
     mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
     # Define prior means (mu_p) for each mixture component
-    # Initialize VAE with learnable prior means
     latent_dim = sentencebert.get_sentence_embedding_dimension()
     num_mixtures = len(goals)
-    
-    code_snippet = """
+
     vae = GMVAE(
         input_dim = dataset[0].shape[0], 
-        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
-        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
-        latent_dim=latent_dim, 
-        num_mixtures=num_mixtures, 
-        mu_p=mu_p
-    )
-    vae.to(device)
-    """
-    wandb.log({"code_snippet": code_snippet})
-    vae = GMVAE(
-        input_dim = dataset[0].shape[0], 
-        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
-        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
+        encoder_hidden = args.Network.encoder_hidden, #Don't forget to edit the snippet above as well
+        decoder_hidden = args.Network.decoder_hidden, 
         latent_dim=latent_dim, 
         num_mixtures=num_mixtures, 
         mu_p=mu_p
@@ -148,18 +131,18 @@ def main(args):
     vae.to(device)
 
     # Define optimizer (only parameters that require gradients)
-    optimizer = optim.Adam(vae.parameters(), lr=0.001)
+    optimizer = optim.Adam(vae.parameters(), lr=args.Network.lr)
     
     # Learning rate scheduler
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
 
     # Training loop with KL annealing
-    epochs = args.epoch
+    epochs = args.Network.epoch
     kl_annealing = False
-    anneal_start = args.epoch/args.epoch
-    anneal_end = args.epoch
+    anneal_start = args.Network.epoch/args.Network.epoch
+    anneal_end = args.Network.epoch
     # Create data directory if it doesn't exist
-    data_dir = f'models/{args.encoder_model}/Feature_based'
+    data_dir = f'models/{args.General.encoder_model}/Feature_based'
     os.makedirs(data_dir, exist_ok=True)
     train_vae(vae, dataloader, optimizer, device, data_dir, epochs, kl_annealing, anneal_start, anneal_end)
 
@@ -175,8 +158,7 @@ def main(args):
     # latent = visualize_latent_space(vae, dataloader, device, latent, method='tsne', save_path=f'{data_dir}/latent_space_tsne.png')
 
 if __name__ == "__main__":
-    args = parse_args()
-    wandb.init(project="Imagination-VAE_training", config=args)
-    main(args)
+    wandb.init(project="Imagination-VAE_training")
+    main()
 
 

@@ -43,6 +43,6 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     latent = visualize_latent_space(vae, dataloader, device, latent, labels, method='tsne', save_path=data_dir, checkpoint = vae_checkpoint.split("/")[-1])
     
 if __name__ == "__main__":
-    test_vae("models/all-MiniLM-L6-v2/Feature_based/vae_normal.pth", "all-MiniLM-L6-v2", "data/data.pkl")
+    test_vae("models/all-MiniLM-L12-v2/Feature_based/vae_normal.pth", "all-MiniLM-L12-v2", "data/all-MiniLM-L12-v2/data.pkl")
     
     

@@ -1,5 +1,16 @@
-lr : 0.001
-batch_size: 1000
-hidden_layers : [512, 512, 512, 1024, 1024, 1024, 2048, 2048, 2048]
-epoch : 80000
-max_gradient : 10
+General:
+  env : "SimplePickup"
+  max_ep_len : 20
+  encoder_model : "all-MiniLM-L12-v2"
+  datapath : "data"
+  vae_checkpoint : "models/all-MiniLM-L12-v2/Feature_based/vae_normal.pth"
+  sac_agent_checkpoint : "models/sac_agent/SAC_discrete.tar"
+  buffer_size : 3000_00
+
+Network:
+  lr : 0.001
+  batch_size: 1000
+  hidden_layers : [512, 512, 512, 1024, 1024, 1024, 2048, 2048, 2048]
+  epoch : 80000
+  max_gradient : 10
+  checkpoint_interval : 10000

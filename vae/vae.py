@@ -178,7 +178,7 @@ class GMVAE(nn.Module):
         reconstructed_data = self.generative_model(inference_net_out['latent'])
         return inference_net_out, reconstructed_data
     
-    def kl_divergence_loss(self, inference_out):
+    def kl_divergence_loss(self, inference_out, captions):
         """
         Compute the KL divergence between the approximate posterior and the prior.
 
@@ -203,10 +203,40 @@ class GMVAE(nn.Module):
         #The full KL divergence of gaussian mixture model contain two parts
         #E_q(c|x)[KL(q(z|x,c))||p(z|c)] + KL(q(c|x)||p(c))
         kl_z = torch.sum(torch.stack(kl_divergence, dim=-1)*inference_out['prob_cat'], dim=-1)
-        kl_c = torch.sum(inference_out['prob_cat'] * torch.log(inference_out['prob_cat'] / self.prior_c.unsqueeze(dim=0)), dim=-1)
-        return kl_z + kl_c
+        
+        #The prior weights are choosen as the cosine similarity between the prior mean and the state captions
+        # Expand prior_means to have the same number of rows as captions
+        prior_means = self.mu_p_buffer.unsqueeze(0).expand(inference_out['mean'].shape[0], -1, -1)  # Shape: [1000, 2, 384]
+        captions = captions.unsqueeze(1)  # Shape: [1000, 1, 384]
 
-    def loss_function(self, data, inference_out, reconstruction, kl_weight):
+        # Compute cosine similarity along the last dimension
+        cosine_sim = F.cosine_similarity(prior_means, captions, dim=-1)  # Shape: [1000, 2]
+        normalised_cosine_sim = F.softmax(cosine_sim/0.1, dim=-1)
+        
+        # Clip the values to avoid log(0) and division by zero
+        prob_cat_clipped = torch.clamp(inference_out['prob_cat'], min=1e-10)
+        normalised_cosine_sim_clipped = torch.clamp(normalised_cosine_sim, min=1e-10)
+        
+        kl_c = torch.sum(prob_cat_clipped * torch.log(prob_cat_clipped / normalised_cosine_sim_clipped), dim=-1)
+        return kl_z + kl_c
+    
+    # def caption_loss(self, inference_out, captions):
+    #     class_prob = inference_out['categorical']
+    #     # Expand prior_means to have the same number of rows as captions
+    #     prior_means = self.mu_p_buffer.unsqueeze(0).expand(class_prob.shape[0], -1, -1)  # Shape: [1000, 2, 384]
+    #     captions = captions.unsqueeze(1)  # Shape: [1000, 1, 384]
+
+    #     # Compute cosine similarity along the last dimension
+    #     cosine_sim = F.cosine_similarity(prior_means, captions, dim=-1)  # Shape: [1000, 2]
+    #     normalised_cosine_sim = F.softmax(cosine_sim, dim=-1)
+        
+    #     #Compute the KL-divergence
+    #     kl_div = normalised_cosine_sim * (torch.log(normalised_cosine_sim + 1e-10) - torch.log(class_prob + 1e-10))
+    #     kl_div = torch.sum(kl_div, dim=-1)
+    #     # caption_loss = F.kl_div(class_prob, normalised_cosine_sim, reduction = 'none')
+    #     return torch.sum(kl_div)
+
+    def loss_function(self, data, caption, inference_out, reconstruction, kl_weight):
         """
         Compute the VAE loss function.
 
@@ -225,7 +255,10 @@ class GMVAE(nn.Module):
         recon_loss = F.mse_loss(reconstruction, data, reduction='sum')
 
         # KL divergence loss
-        kl = torch.sum(self.kl_divergence_loss(inference_out))
+        kl = torch.sum(self.kl_divergence_loss(inference_out, caption))
+        
+        #Caption loss
+        # caption_loss = self.caption_loss(inference_out, caption)
 
         # Total loss with annealed KL weight
         loss = recon_loss + kl_weight * kl

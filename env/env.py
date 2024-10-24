@@ -222,6 +222,11 @@ class SimplePickup(MiniGridEnv):
             self.place_agent()
 
         self.mission = "Pick the green ball"
+    
+    def describe_objects(self, objects):
+        if not objects:
+            return "You see nothing."
+        return "You see " + ", ".join(objects) + "."
         
     def extract_objects_from_observation(self):
         """
@@ -255,12 +260,13 @@ class SimplePickup(MiniGridEnv):
                 if obj_type not in ['empty', 'wall']:
                     object_description = f"{obj_color} {obj_type}"
                     objects_seen.add(object_description)
-
-        return objects_seen
+        caption = self.describe_objects(objects_seen)
+        return objects_seen, caption
         
     def reset(self):
-        obs, info = super().reset()
-        return preprocess_observation(obs), info
+        self.obs, info = super().reset()
+        obs = preprocess_observation(self.obs)
+        return obs, info
         
     def step(self, action):
         self.obs, reward, terminated, truncated, info = super().step(action)

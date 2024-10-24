@@ -30,7 +30,7 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
                 data = data.float().to(device)
                 # Forward pass
                 inference_out, reconstruction = model(data)
-                labels = torch.argmax(inference_out['categorical'], dim=-1)
+                labels = torch.argmax(inference_out['prob_cat'], dim=-1)
                 all_z.append(inference_out['latent'].cpu().numpy())
                 all_labels.append(labels.cpu().numpy())
                 # Optionally, collect labels or other metadata if available
@@ -89,6 +89,17 @@ class TextDataset(Dataset):
             str: Sentence.
         """
         return self.sentences[idx]
+    
+class TwoListDataset(Dataset):
+    def __init__(self, list1, list2):
+        self.list1 = list1
+        self.list2 = list2
+    
+    def __len__(self):
+        return len(self.list1)  # Assume both lists are of the same length
+    
+    def __getitem__(self, idx):
+        return self.list1[idx], self.list2[idx]
     
 def normalize_data(data):
     """

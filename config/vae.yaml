@@ -1,0 +1,12 @@
+General:
+  env : "SimplePickup"
+  use_logger : true
+  encoder_model : "all-MiniLM-L12-v2"
+  datapath : "data"
+Network:
+  lr : 0.001
+  batch_size: 1000
+  encoder_hidden : [1024,1024,512,512,512,256,256,256,256]
+  decoder_hidden : [256,256,256,256,512,512,512,1024,1024]
+  epoch : 1000
+  max_gradient : 10

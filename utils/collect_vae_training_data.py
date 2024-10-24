@@ -9,11 +9,13 @@ import gymnasium
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
+from sentence_transformers import SentenceTransformer
 import sys
 sys.path.append('.')
 
 from env.env import preprocess_observation
+
+encoder = "all-MiniLM-L12-v2"
 
 # =============================
 # 1. Define the Q-Network Class
@@ -179,8 +181,11 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
         list: Collected transitions as dictionaries.
     """
     data = []
-    #state_captioner = MiniGridStateCaptioner(env)
+    captions = []
     
+    # Load the sentecebert model to get the embedding of the goals from the LLM
+    sentencebert = SentenceTransformer(encoder)
+
     # Initialize Q-network if not using random policy
     if not use_random:
         # Define the input and output dimensions based on preprocessing
@@ -203,9 +208,13 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     
     for episode in range(1, episodes + 1):
         state, info = env.reset()
+        objects, caption = env.extract_objects_from_observation()
+        caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
+        captions.append(caption_encoding)
         #caption = state_captioner.generate_caption(state)
         # state = preprocess_observation(state)
         data.append(state)
+        
         done = False
         step = 0
         while not done:
@@ -217,7 +226,9 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             
             next_state, reward, terminated, truncated, info = env.step(action)
             done = terminated + truncated
-            #Get the caption
+            objects, caption = env.extract_objects_from_observation()
+            caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
+            captions.append(caption_encoding)
             # next_state = preprocess_observation(next_state)
             # Store the transition
             data.append(next_state)
@@ -228,7 +239,7 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
         print(f"Episode {episode}/{episodes} finished after {step} steps.")
     
     env.close()
-    return data
+    return data, captions
 
 # =============================
 # 5. Main Function
@@ -248,7 +259,7 @@ def main():
     print(f"Using device: {device}")
     
     # Create data directory if it doesn't exist
-    data_dir = 'data'
+    data_dir = f'data/{encoder}'
     os.makedirs(data_dir, exist_ok=True)
     
     if env_name == "SimplePickup":
@@ -256,7 +267,7 @@ def main():
         env = SimplePickup(max_steps=max_steps, agent_view_size=5, size=7)
     
     # Collect data
-    data = collect_data(
+    data, captions = collect_data(
         env=env,
         use_random=use_random,
         q_network_path=q_network_path,
@@ -270,7 +281,11 @@ def main():
     with open(data_path, 'wb') as f:
         pickle.dump(data, f)
     print(f"Collected {len(data)} transitions and saved to {data_path}")
-
+    
+    data_path = os.path.join(data_dir, 'captions.pkl')
+    with open(data_path, 'wb') as f:
+        pickle.dump(captions, f)
+    print(f"Collected {len(captions)} captions and saved to {data_path}")
 # =============================
 # 6. Entry Point
 # =============================
