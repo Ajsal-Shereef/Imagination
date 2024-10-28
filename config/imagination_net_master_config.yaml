@@ -1,0 +1,5 @@
+  defaults:
+    - imagination_net
+    - dqn
+    - sacd
+    - vae

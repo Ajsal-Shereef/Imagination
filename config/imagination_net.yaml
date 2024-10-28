@@ -4,13 +4,14 @@ General:
   encoder_model : "all-MiniLM-L12-v2"
   datapath : "data"
   vae_checkpoint : "models/all-MiniLM-L12-v2/Feature_based/vae_normal.pth"
-  sac_agent_checkpoint : "models/sac_agent/SAC_discrete.tar"
   buffer_size : 3000_00
+  agent : 'dqn'
+  agent_checkpoint : "models/dqn_agent/dqn_model_10000.tar"
 
 Network:
-  lr : 0.001
+  lr : 0.0001
   batch_size: 1000
-  hidden_layers : [512, 512, 512, 1024, 1024, 1024, 2048, 2048, 2048]
+  hidden_layers : [256, 512, 512]
   epoch : 80000
   max_gradient : 10
   checkpoint_interval : 10000

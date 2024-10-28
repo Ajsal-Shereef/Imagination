@@ -1,6 +1,6 @@
 import numpy as np
 from gymnasium import spaces
-from minigrid.core.constants import COLOR_NAMES, OBJECT_TO_IDX, COLOR_TO_IDX, STATE_TO_IDX
+from minigrid.core.constants import COLOR_NAMES, OBJECT_TO_IDX, COLOR_TO_IDX, STATE_TO_IDX, DIR_TO_VEC
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
 from minigrid.core.world_object import Door, Goal, Key, Wall, Ball
@@ -69,6 +69,76 @@ def preprocess_observation(obs):
     processed_obs = np.concatenate([processed_obs.flatten(), direction_one_hot])
 
     return processed_obs
+
+def one_hot_to_index(one_hot_vec):
+    """Helper function to convert a one-hot encoded vector back to the index."""
+    return np.argmax(one_hot_vec)
+
+def reverse_preprocess_observation(processed_obs, height, width):
+    """
+    Reverses the preprocessing of a MiniGrid observation, returning the original observation format.
+    
+    Args:
+        processed_obs: Preprocessed observation (1D vector).
+        height: The height of the observation grid (view_size).
+        width: The width of the observation grid (view_size).
+        
+    Returns:
+        original_obs: Dictionary with 'image' (grid of [object_type, color, state]) and 'direction'.
+    """
+    # Define constants for sizes
+    num_objects = len(OBJECT_TO_IDX)
+    num_colors = len(COLOR_TO_IDX)
+    num_states = len(STATE_TO_IDX)
+    num_directions = NUM_DIRECTIONS  # The total number of possible directions (4 in MiniGrid)
+
+    # Compute the size of one cell's encoding (object, color, state concatenated)
+    cell_encoding_size = num_objects + num_colors + num_states
+
+    # Total number of cells in the grid
+    num_cells = height * width
+
+    # Split the flattened processed_obs into grid part and direction part
+    grid_part = processed_obs[:-num_directions]
+    direction_part = processed_obs[-num_directions:]
+
+    # Reshape grid part back into (num_cells, cell_encoding_size)
+    grid_part = grid_part.reshape((num_cells, cell_encoding_size))
+
+    # Initialize the original observation image
+    original_image = np.zeros((height, width, 3), dtype=int)
+
+    # Iterate over each cell in the grid and decode the object, color, and state
+    for cell_idx in range(num_cells):
+        i = cell_idx // width  # Row index
+        j = cell_idx % width   # Column index
+
+        # Extract the one-hot encoded parts for object, color, and state
+        obj_one_hot = grid_part[cell_idx][:num_objects]
+        color_one_hot = grid_part[cell_idx][num_objects:num_objects + num_colors]
+        state_one_hot = grid_part[cell_idx][num_objects + num_colors:]
+
+        # Convert back to indices
+        obj_type = one_hot_to_index(obj_one_hot)
+        obj_color = one_hot_to_index(color_one_hot)
+        obj_state = one_hot_to_index(state_one_hot)
+
+        # Reconstruct the original observation grid cell
+        original_image[i, j, 0] = obj_type
+        original_image[i, j, 1] = obj_color
+        original_image[i, j, 2] = obj_state
+
+    # Decode the agent's direction from the one-hot encoded direction part
+    agent_direction = one_hot_to_index(direction_part)
+
+    # Reconstruct the original observation dictionary
+    original_obs = {
+        'image': original_image,
+        'direction': agent_direction
+    }
+
+    return original_obs
+
 
 # def preprocess_observation(obs):
 #     """
@@ -156,7 +226,8 @@ class SimplePickup(MiniGridEnv):
     def __init__(
         self,
         max_steps,
-        size=10,
+        size=7,
+        render_mode = None,
         agent_start_pos=None,
         agent_start_dir=None,
         **kwargs,
@@ -175,6 +246,7 @@ class SimplePickup(MiniGridEnv):
             # Set this to True for maximum speed
             see_through_walls=True,
             max_steps=max_steps,
+            render_mode = render_mode,
             **kwargs,
         )
         self.observation_space = spaces.Box(low=0, high=1, shape=(504,), dtype=np.float32)
@@ -208,11 +280,11 @@ class SimplePickup(MiniGridEnv):
         # # Place a ball square in the bottom-right corner
         # self.put_obj(Ball(color='red'), set2[0], set2[1])
         
-        # Place a ball square in the bottom-right corner
-        self.put_obj(Ball(color='green'), 1, width-2)
-        
-        # Place a ball square in the bottom-right corner
-        self.put_obj(Ball(color='red'), width-2, height-2)
+        # Place one green ball at a random position
+        self.place_obj(Ball('green'), max_tries=100)
+
+        # Place one red ball at a random position
+        self.place_obj(Ball('red'), max_tries=100)
 
         # Place the agent
         if self.agent_start_pos is not None:
@@ -223,45 +295,185 @@ class SimplePickup(MiniGridEnv):
 
         self.mission = "Pick the green ball"
     
-    def describe_objects(self, objects):
-        if not objects:
-            return "You see nothing."
-        return "You see " + ", ".join(objects) + "."
+    # def describe_objects(self, objects):
+    #     if not objects:
+    #         return "You see nothing."
+    #     return "You see " + ", ".join(objects) + "."
         
-    def extract_objects_from_observation(self):
-        """
-        Extracts the objects present in the partial observation, excluding empty tiles and walls.
+    # def extract_objects_from_observation(self, obs):
+    #     """
+    #     Extracts the objects present in the partial observation, excluding empty tiles and walls.
 
-        Args:
-            observation (numpy array): Observation from the MiniGrid environment, shape (view_size, view_size, 3).
+    #     Args:
+    #         observation (numpy array): Observation from the MiniGrid environment, shape (view_size, view_size, 3).
 
-        Returns:
-            Set: A set containing strings that describe the objects with their colors.
-        """
-        objects_seen = set()
+    #     Returns:
+    #         Set: A set containing strings that describe the objects with their colors.
+    #     """
+    #     objects_seen = set()
 
-        # Create reverse dictionaries to map indices back to object and color names
-        IDX_TO_OBJECT = {v: k for k, v in OBJECT_TO_IDX.items()}
+    #     # Create reverse dictionaries to map indices back to object and color names
+    #     IDX_TO_OBJECT = {v: k for k, v in OBJECT_TO_IDX.items()}
+    #     IDX_TO_COLOR = {v: k for k, v in COLOR_TO_IDX.items()}
+
+    #     # Iterate through the observation grid (view_size x view_size)
+    #     for i in range(obs['image'].shape[0]):
+    #         for j in range(obs['image'].shape[1]):
+    #             # Extract object type, color, and state from the last dimension
+    #             obj_type_code = obs['image'][i, j, 0]
+    #             obj_color_code = obs['image'][i, j, 1]
+    #             obj_state = obs['image'][i, j, 2]  # State is currently unused but available
+
+    #             # Map the codes to their respective descriptions
+    #             obj_type = IDX_TO_OBJECT.get(obj_type_code, 'unknown')
+    #             obj_color = IDX_TO_COLOR.get(obj_color_code, 'unknown')
+
+    #             # Filter out 'empty' and 'wall' objects
+    #             if obj_type not in ['empty', 'wall']:
+    #                 object_description = f"{obj_color} {obj_type}"
+    #                 objects_seen.add(object_description)
+    #     caption = self.describe_objects(objects_seen)
+    #     return objects_seen, caption
+    
+    def get_object_name(self, obj_type, obj_color, obj_state):
+        """Returns a string description of an object based on its type, color, and state."""
+        #Invert the dictionary
         IDX_TO_COLOR = {v: k for k, v in COLOR_TO_IDX.items()}
+        IDX_TO_OBJECTS = {v: k for k, v in OBJECT_TO_IDX.items()}
+        IDX_TO_STATE = {v: k for k, v in STATE_TO_IDX.items()}
+        # Map indices to names
+        color_name = IDX_TO_COLOR[obj_color]
+        object_name = IDX_TO_OBJECTS.get(obj_type, "unknown object")
+        state_name = IDX_TO_STATE.get(obj_state, "")
+        # Construct a descriptive name
+        return f"{color_name} {object_name}".strip()
 
-        # Iterate through the observation grid (view_size x view_size)
-        for i in range(self.obs['image'].shape[0]):
-            for j in range(self.obs['image'].shape[1]):
-                # Extract object type, color, and state from the last dimension
-                obj_type_code = self.obs['image'][i, j, 0]
-                obj_color_code = self.obs['image'][i, j, 1]
-                obj_state = self.obs['image'][i, j, 2]  # State is currently unused but available
+    # def generate_caption(self, observation):
+    #     """
+    #     Generate a natural language caption for the MiniGrid observation.
 
-                # Map the codes to their respective descriptions
-                obj_type = IDX_TO_OBJECT.get(obj_type_code, 'unknown')
-                obj_color = IDX_TO_COLOR.get(obj_color_code, 'unknown')
+    #     Parameters:
+    #         observation (dict): The observation dictionary with keys 'image', 'direction', 'mission'.
 
-                # Filter out 'empty' and 'wall' objects
-                if obj_type not in ['empty', 'wall']:
-                    object_description = f"{obj_color} {obj_type}"
-                    objects_seen.add(object_description)
-        caption = self.describe_objects(objects_seen)
-        return objects_seen, caption
+    #     Returns:
+    #         str: A caption describing the state.
+    #     """
+    #     # Extract relevant data from observation
+    #     image = observation['image']
+    #     view_size = image.shape[0]
+    #     agent_position = (view_size // 2, view_size - 1)
+
+    #     # Initialize lists to store object descriptions and distances
+    #     descriptions = []
+    #     distances = []
+
+    #     # Iterate over the field of view and collect descriptions for each visible object
+    #     for i in range(view_size):
+    #         for j in range(view_size):
+    #             # Extract object type, color, and state from the image
+    #             obj_type, obj_color, obj_state = image[i, j]
+
+    #             # Skip "wall" and "empty" objects based on their indices
+    #             if obj_type in {OBJECT_TO_IDX['wall'], OBJECT_TO_IDX['empty']}:
+    #                 continue
+                
+    #             # Generate a natural language description of the object
+    #             obj_description = self.get_object_name(obj_type, obj_color, obj_state)
+
+    #             # Calculate the Euclidean distance from the agent to this object
+    #             distance = np.sqrt((i - agent_position[0])**2 + (j - agent_position[1])**2)
+
+    #             # Store the object description and distance
+    #             descriptions.append(obj_description)
+    #             distances.append((distance, obj_description))
+
+    #     # Generate the final caption based on the collected descriptions
+    #     if not descriptions:
+    #         # No objects detected in the view
+    #         return "You see nothing."
+
+    #     # Sort the objects by proximity and identify the closest one
+    #     distances.sort()
+    #     min_distance = distances[0][0]
+    #     closest_objects = [desc for dist, desc in distances if dist == min_distance]
+
+    #     # Join all objects descriptions
+    #     objects_seen = ", ".join(descriptions)
+
+    #     # Create the caption
+    #     # Create the caption mentioning all closest objects
+    #     if len(closest_objects) == 1:
+    #         caption = f"You see {objects_seen} and you are close to {closest_objects[0]}."
+    #     else:
+    #         closest_desc = " and ".join(closest_objects)
+    #         caption = f"You see {objects_seen} and you are close to {closest_desc}."
+    #     return caption
+    
+    # def generate_caption(self, observation):
+    #     view_size = observation['image'].shape[0]
+    #     image = observation['image']
+    #     agent_direction = observation['direction']
+    #     mission = observation['mission']
+        
+    #     # Define direction mapping for descriptive text
+    #     direction_map = {0: "front", 1: "right", 2: "behind", 3: "left"}
+        
+    #     # Agent's fixed position in its field of view
+    #     agent_pos = np.array([view_size - 1, view_size // 2])
+    
+    #     # Track objects and their positions
+    #     objects = []
+    #     distances = []
+    #     directions = []
+        
+    #     # Iterate over each cell in the field of view
+    #     for i in range(view_size):
+    #         for j in range(view_size):
+    #             obj_type, obj_color, obj_state = image[i, j]
+                
+    #             # Skip walls and empty spaces
+    #             if obj_type in {OBJECT_TO_IDX['wall'], OBJECT_TO_IDX['empty']}:
+    #                 continue
+                
+    #             # Calculate Euclidean distance from agent's position to object
+    #             obj_pos = np.array([i, j])
+    #             distance = np.linalg.norm(obj_pos - agent_pos)
+                
+    #             # Determine the relative direction based on agent's orientation
+    #             relative_position = obj_pos - agent_pos
+    #             obj_direction = "nearby"
+    #             for dir_key, dir_vector in enumerate(DIR_TO_VEC):
+    #                 if np.array_equal(np.sign(relative_position), dir_vector):
+    #                     obj_direction = direction_map[(agent_direction + dir_key) % 4]
+    #                     break
+
+    #             # Get object and color names
+    #             obj_name = list(OBJECT_TO_IDX.keys())[list(OBJECT_TO_IDX.values()).index(obj_type)]
+    #             color_name = COLOR_NAMES[obj_color]
+                
+    #             # Record object details
+    #             obj_description = f"{color_name} {obj_name}"
+    #             objects.append((obj_description, obj_direction))
+    #             distances.append(distance)
+    #             directions.append(obj_direction)
+        
+    #     # If no objects were observed
+    #     if not objects:
+    #         return "You see nothing."
+        
+    #     # Determine the closest objects (can be more than one if distances match)
+    #     min_distance = min(distances)
+    #     closest_objects = [(desc, dir) for (desc, dir), dist in zip(objects, distances) if dist == min_distance]
+        
+    #     # Formulate the caption
+    #     object_list = ", ".join([f"{desc} to your {dir}" for desc, dir in objects])
+    #     closest_desc = " and ".join([f"{desc} to your {dir}" for desc, dir in closest_objects])
+        
+    #     caption = f"You see {object_list}. You are closest to {closest_desc}."
+    #     return caption
+    
+    def get_unprocesed_obs(self):
+        return self.obs
         
     def reset(self):
         self.obs, info = super().reset()

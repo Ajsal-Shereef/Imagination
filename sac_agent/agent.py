@@ -82,7 +82,7 @@ class SAC(nn.Module):
             state = torch.from_numpy(state).float().to(self.device)
         with torch.no_grad():
             action = self.actor_local.get_det_action(state)
-        if len(action) != 1:
+        if action.dim() > 0:
             return action
         else:
             return action.item()

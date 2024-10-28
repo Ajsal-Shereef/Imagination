@@ -28,7 +28,7 @@ def test_vae(vae_checkpoint, pretrained_model, datapath):
     vae = GMVAE(
         input_dim = dataset[0].shape[0], 
         encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
-        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
+        decoder_hidden = [256,256,256,256,512,512], 
         latent_dim=latent_dim, 
         num_mixtures=num_mixtures, 
         mu_p=mu_p

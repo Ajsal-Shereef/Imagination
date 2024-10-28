@@ -8,6 +8,7 @@ from tqdm import tqdm
 from utils.utils import *
 from vae.vae import GMVAE
 import torch.optim as optim
+from dqn.dqn import DQNAgent
 from sac_agent.agent import SAC
 import torch.nn.utils as nn_utils
 from torch.utils.data import DataLoader
@@ -18,20 +19,20 @@ from imagination.imagination_net import ImaginationNet
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def train_imagination_net(config, 
+def train_imagination_net(config,
+                          env, 
                           vae, 
-                          sac_agent, 
+                          agent, 
                           dataloader, 
                           checkpoint_interval, 
                           checkpoint_dir,
-                          input_dim,
                           num_goals):
     hidden_layers = config.hidden_layers
-    imagination_net = ImaginationNet(input_dim = input_dim,
+    imagination_net = ImaginationNet(env = env,
                                      hidden_layers = hidden_layers,
                                      num_goals = num_goals,
                                      vae = vae,
-                                     sac = sac_agent).to(device)
+                                     agent = agent).to(device)
     # wandb.watch(imagination_net)
     #Creating the optimizer
     optimizer = optim.Adam(imagination_net.parameters(), lr=config['lr'])
@@ -55,10 +56,10 @@ def train_imagination_net(config,
             total_proximity_loss += proximity_loss.item()
             pbar.set_postfix({'Loss': loss.item(), 'Class loss': class_loss.item(), 'Policy loss': policy_loss.item(), 'Proximity loss': proximity_loss.item()})
             
-        average_loss = total_loss / len(dataloader)
-        average_class_loss = total_class_loss / len(dataloader)
-        average_policy_loss = total_policy_loss / len(dataloader)
-        average_proximity_loss = total_proximity_loss / len(dataloader)
+        average_loss = total_loss #/ len(dataloader)
+        average_class_loss = total_class_loss #/ len(dataloader)
+        average_policy_loss = total_policy_loss #/ len(dataloader)
+        average_proximity_loss = total_proximity_loss #/ len(dataloader)
         # current_lr = scheduler.get_last_lr()[0]
         wandb.log({"Total loss" : average_loss,
                    "Class loss" : average_class_loss,
@@ -71,7 +72,7 @@ def train_imagination_net(config,
         # print(f"Epoch {epoch}/{epochs} - Loss: {average_loss:.4f}, Recon Loss: {average_recon:.4f}, KL Divergence: {average_kl:.4f}, KL Weight: {kl_weight:.4f}")
     print("Training complete.")
 
-@hydra.main(version_base=None, config_path="config", config_name="imagination_net")
+@hydra.main(version_base=None, config_path="config", config_name="imagination_net_master_config")
 def main(args: DictConfig) -> None:
     # Log the configuration
     wandb.config.update(OmegaConf.to_container(args, resolve=True))
@@ -101,8 +102,8 @@ def main(args: DictConfig) -> None:
     num_mixtures = len(goals)
     vae = GMVAE(
         input_dim = dataset[0].shape[0], 
-        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
-        decoder_hidden = [256,256,256,256,512,512,512,1024,1024], 
+        encoder_hidden = args.Network.encoder_hidden,
+        decoder_hidden = args.Network.decoder_hidden, 
         latent_dim=latent_dim, 
         num_mixtures=num_mixtures, 
         mu_p=mu_p
@@ -113,16 +114,24 @@ def main(args: DictConfig) -> None:
     #Freezing the VAE weight to prevent updating
     for params in vae.parameters():
         params.requires_grad = False
-    
-    sac_agent = SAC(args,
+        
+    if args.General.agent == 'dqn':
+        agent = DQNAgent(env, 
+                        args.General, 
+                        args.policy_config, 
+                        args.policy_network_cfg, 
+                        args.policy_network_cfg, '')
+    else:
+        agent = SAC(args,
                     state_size = env.observation_space.shape[0],
                     action_size = env.action_space.n,
                     device=device,
                     buffer_size = args.General.buffer_size)
+    
     #Loading the pretrained weight of sac agent.
-    sac_agent.load_params(args.General.sac_agent_checkpoint)
+    agent.load_params(args.General.agent_checkpoint)
     #Freezing the SAC agent weight to prevent updating
-    for params in sac_agent.parameters():
+    for params in agent.parameters():
         params.requires_grad = False
     
     # Create data directory if it doesn't exist
@@ -131,12 +140,12 @@ def main(args: DictConfig) -> None:
     
     #Train imagination Net
     train_imagination_net(config = args.Network, 
+                          env= env,
                           vae = vae, 
-                          sac_agent = sac_agent, 
+                          agent = agent, 
                           dataloader = dataloader, 
                           checkpoint_interval = args.Network.checkpoint_interval, 
                           checkpoint_dir = model_dir,
-                          input_dim = env.observation_space.shape[0],
                           num_goals = len(goals))
     
 if __name__ == "__main__":

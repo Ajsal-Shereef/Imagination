@@ -11,15 +11,17 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 goal_gen = GetLLMGoals()
 goals = goal_gen.llmGoals([])
 # Load the sentecebert model to get the embedding of the goals from the LLM
-sentencebert = SentenceTransformer("paraphrase-albert-small-v2")
+sentencebert = SentenceTransformer("all-MiniLM-L12-v2")
 # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
 mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
 
-caption1 = 'You see red ball, green ball'
-caption2 = 'You see red ball'
-caption3 = 'You see green ball'
-caption4 = 'You see nothing'
-caption5 = 'You see green ball, red ball'
+caption1 = 'You see red ball, green ball and you are close to red ball'
+caption2 = 'You see green ball, red ball and you are close to red ball'
+caption3 = 'You see red ball and you are close to red ball'
+caption4 = 'You see green ball and you are close to green ball'
+caption5 = 'You see nothing'
+caption6 = 'You see red ball, green ball and you are close to green ball'
+caption7 = 'You see green ball, red ball and you are close to green ball'
 
 cs1_1 = F.cosine_similarity(sentencebert.encode(caption1, convert_to_tensor=True, device=device), mu_p[0], dim=-1)
 cs1_2 = F.cosine_similarity(sentencebert.encode(caption1, convert_to_tensor=True, device=device), mu_p[1], dim=-1)
@@ -36,6 +38,12 @@ sm4 = F.softmax(torch.stack((cs4_1, cs4_2))/0.1, dim=-1)
 cs5_1 = F.cosine_similarity(sentencebert.encode(caption5, convert_to_tensor=True, device=device), mu_p[0], dim=-1)
 cs5_2 = F.cosine_similarity(sentencebert.encode(caption5, convert_to_tensor=True, device=device), mu_p[1], dim=-1)
 sm5 = F.softmax(torch.stack((cs5_1, cs5_2))/0.1, dim=-1)
+cs6_1 = F.cosine_similarity(sentencebert.encode(caption6, convert_to_tensor=True, device=device), mu_p[0], dim=-1)
+cs6_2 = F.cosine_similarity(sentencebert.encode(caption6, convert_to_tensor=True, device=device), mu_p[1], dim=-1)
+sm6 = F.softmax(torch.stack((cs6_1, cs6_2))/0.1, dim=-1)
+cs7_1 = F.cosine_similarity(sentencebert.encode(caption7, convert_to_tensor=True, device=device), mu_p[0], dim=-1)
+cs7_2 = F.cosine_similarity(sentencebert.encode(caption7, convert_to_tensor=True, device=device), mu_p[1], dim=-1)
+sm7 = F.softmax(torch.stack((cs7_1, cs7_2))/0.1, dim=-1)
 
 print(cs1_1)
 print(cs1_2)
@@ -56,4 +64,12 @@ print('************')
 print(cs5_1)
 print(cs5_2)
 print(sm5)
+print('************')
+print(cs6_1)
+print(cs6_2)
+print(sm6)
+print('************')
+print(cs7_1)
+print(cs7_2)
+print(sm7)
 print("done")

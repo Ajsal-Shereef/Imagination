@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from architectures.mlp import MLP
+from architectures.mlp import MLP, Linear
 from architectures.Layers import *
 from torch.distributions import kl_divergence
 
@@ -126,7 +126,8 @@ class GMVAE(nn.Module):
         self.register_buffer('mu_p_buffer', mu_p)  # Register as buffer to move with device
         
         #This is the prior weight of the gaussin, we weight each gaussian equally
-        self.prior_c = torch.full((self.num_mixtures,), 1.0 / self.num_mixtures).to(device)
+        # self.prior_c = torch.full((self.num_mixtures,), 1.0 / self.num_mixtures).to(device)
+        self.prior_c = nn.Parameter(torch.zeros(self.num_mixtures))
             
     # Function to apply Xavier normal initialization
     def init_weights(self, m):
@@ -204,20 +205,23 @@ class GMVAE(nn.Module):
         #E_q(c|x)[KL(q(z|x,c))||p(z|c)] + KL(q(c|x)||p(c))
         kl_z = torch.sum(torch.stack(kl_divergence, dim=-1)*inference_out['prob_cat'], dim=-1)
         
-        #The prior weights are choosen as the cosine similarity between the prior mean and the state captions
-        # Expand prior_means to have the same number of rows as captions
-        prior_means = self.mu_p_buffer.unsqueeze(0).expand(inference_out['mean'].shape[0], -1, -1)  # Shape: [1000, 2, 384]
-        captions = captions.unsqueeze(1)  # Shape: [1000, 1, 384]
+        # #The prior weights are choosen as the cosine similarity between the prior mean and the state captions
+        # # Expand prior_means to have the same number of rows as captions
+        # prior_means = self.mu_p_buffer.unsqueeze(0).expand(inference_out['mean'].shape[0], -1, -1)  # Shape: [1000, 2, 384]
+        # captions = captions.unsqueeze(1)  # Shape: [1000, 1, 384]
 
-        # Compute cosine similarity along the last dimension
-        cosine_sim = F.cosine_similarity(prior_means, captions, dim=-1)  # Shape: [1000, 2]
-        normalised_cosine_sim = F.softmax(cosine_sim/0.1, dim=-1)
+        # # Compute cosine similarity along the last dimension
+        # cosine_sim = F.cosine_similarity(prior_means, captions, dim=-1)  # Shape: [1000, 2]
+        # normalised_cosine_sim = F.softmax(cosine_sim/0.1, dim=-1)
         
-        # Clip the values to avoid log(0) and division by zero
-        prob_cat_clipped = torch.clamp(inference_out['prob_cat'], min=1e-10)
-        normalised_cosine_sim_clipped = torch.clamp(normalised_cosine_sim, min=1e-10)
+        # # Clip the values to avoid log(0) and division by zero
+        # prob_cat_clipped = torch.clamp(inference_out['prob_cat'], min=1e-10)
+        # normalised_cosine_sim_clipped = torch.clamp(normalised_cosine_sim, min=1e-10)
         
-        kl_c = torch.sum(prob_cat_clipped * torch.log(prob_cat_clipped / normalised_cosine_sim_clipped), dim=-1)
+        # kl_c = torch.sum(prob_cat_clipped * torch.log(prob_cat_clipped / normalised_cosine_sim_clipped), dim=-1)
+        #Get the prior
+        prior = F.softmax(self.prior_c, dim=-1)
+        kl_c = torch.sum(inference_out['prob_cat'] * torch.log(inference_out['prob_cat'] / prior), dim=-1)
         return kl_z + kl_c
     
     # def caption_loss(self, inference_out, captions):
@@ -272,7 +276,7 @@ class GMVAE(nn.Module):
             path (str): File path to save the model.
         """
         torch.save(self.state_dict(), path)
-        print(f"Model saved to {path}")
+        print(f"[INFO] Model saved to {path}")
 
     def load(self, path):
         """
@@ -283,4 +287,4 @@ class GMVAE(nn.Module):
         """
         self.load_state_dict(torch.load(path, map_location=self.mu_p_buffer.device))
         self.eval()
-        print(f"VAE Model loaded from {path}")
+        print(f"[INFO] VAE Model loaded from {path}")

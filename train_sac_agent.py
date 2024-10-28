@@ -90,10 +90,9 @@ def train(config):
 
             if i % config.save_every == 0:
                 sac_agent.save("models/sac_agent", save_name="SAC_discrete")
-                    
+        sac_agent.save("models/sac_agent", save_name="SAC_discrete")            
         #Testing the training
-        
-        test(config, env, sac_agent, "Videos/Multi_agent", n_episode=100)
+        test(config, env, sac_agent, "Videos/Sac_agent", n_episode=20)
             
 if __name__ == "__main__":
     config = get_config()

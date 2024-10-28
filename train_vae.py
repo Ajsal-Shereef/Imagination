@@ -2,6 +2,7 @@ import os
 import hydra
 import wandb
 import torch
+import warnings
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
@@ -13,7 +14,7 @@ from omegaconf import DictConfig, OmegaConf
 from utils.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
 
-
+warnings.filterwarnings('ignore')
 # =============================
 # 1. Training Function
 # =============================
@@ -57,6 +58,7 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
             optimizer.zero_grad()
             # Forward pass
             inference_out, reconstruction = model(data)
+            
             # Compute loss
             loss, recon_loss, kl = model.loss_function(data, caption, inference_out, reconstruction, kl_weight)
             # Backward pass and optimization

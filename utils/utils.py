@@ -160,7 +160,7 @@ def collect_random(env, dataset, num_samples=200):
         if done:
             state, info = env.reset()
             
-def write_video(frames, episode, dump_dir, frameSize = (256, 256)):
+def write_video(frames, episode, dump_dir, frameSize = (224, 224)):
     os.makedirs(dump_dir, exist_ok=True)
     video = cv2.VideoWriter(dump_dir + '/{}.avi'.format(episode),cv2.VideoWriter_fourcc(*'DIVX'), 1, frameSize, isColor=True)
     for img in frames:

@@ -1,0 +1,40 @@
+General:
+  env : "SimplePickup"
+  max_ep_len : 20
+  iteration_num : 20000
+  load_from : ""
+policy_config:
+  gamma : 0.8
+  target_network_update_interval : 1000
+  buffer_size : 1.5e5
+  batch_size : 512
+  init_random_actions : 5e3
+  update_starts_from : 1e3
+  multiple_update : 1
+  train_freq : 4
+  reward_clip : [-1, 1]
+  reward_scale : 1.0
+  gradient_clip : 10.0
+  n_step : 5
+  w_n_step : 1.0
+  use_double_q_update : true
+  max_entropy_objective : true
+  use_prioritized : true
+  per_alpha : 0.6
+  per_beta : 0.4
+  max_entropy_alpha : 0.1
+  per_eps : 1e-6
+  std_init : 0.5
+  max_epsilon: 1.0
+  min_epsilon : 0.10
+  epsilon_decay : 0.995
+  n_random_cae_sample : 0
+  cae_batch_size : 32
+policy_network_cfg:
+  fc_input_size : 504
+  hidden_size : [256,512,512]
+  lr_dqn : 1e-4 
+  adam_eps : 1e-6
+  weight_decay : 1e-8
+  w_q_reg : 0
+  save_freequency : 5000

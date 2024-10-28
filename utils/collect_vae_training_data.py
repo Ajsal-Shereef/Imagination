@@ -1,3 +1,4 @@
+import cv2
 import argparse
 import os
 import pickle
@@ -128,7 +129,7 @@ def parse_arguments():
 #     features = torch.tensor(img_flat, dtype=torch.float32)
 #     features = torch.cat((features, direction), dim=0)  # Shape: (148,)
     
-    return features
+    # return features
 
 def select_action_random(action_space):
     """
@@ -208,7 +209,9 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     
     for episode in range(1, episodes + 1):
         state, info = env.reset()
-        objects, caption = env.extract_objects_from_observation()
+        caption = env.generate_caption(env.get_unprocesed_obs())
+        # frame = env.get_frame()
+        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
         captions.append(caption_encoding)
         #caption = state_captioner.generate_caption(state)
@@ -225,8 +228,10 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
                 action = select_action_q_network(q_network, state, device)
             
             next_state, reward, terminated, truncated, info = env.step(action)
+            # frame = env.get_frame()
+            # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             done = terminated + truncated
-            objects, caption = env.extract_objects_from_observation()
+            caption = env.generate_caption(env.get_unprocesed_obs())
             caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
             captions.append(caption_encoding)
             # next_state = preprocess_observation(next_state)
