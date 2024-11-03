@@ -23,6 +23,10 @@ caption5 = 'You see nothing'
 caption6 = 'You see red ball, green ball and you are close to green ball'
 caption7 = 'You see green ball, red ball and you are close to green ball'
 
+captions = [caption1, caption2, caption3, caption4, caption5, caption6, caption7]
+print(sentencebert.similarity(sentencebert.encode(captions, convert_to_tensor=True, device=device),
+                        sentencebert.encode(captions, convert_to_tensor=True, device=device)))
+
 cs1_1 = F.cosine_similarity(sentencebert.encode(caption1, convert_to_tensor=True, device=device), mu_p[0], dim=-1)
 cs1_2 = F.cosine_similarity(sentencebert.encode(caption1, convert_to_tensor=True, device=device), mu_p[1], dim=-1)
 sm1 = F.softmax(torch.stack((cs1_1, cs1_2))/0.1, dim=-1)

@@ -2,6 +2,7 @@ import hydra
 import wandb
 import warnings
 from dqn.dqn import DQNAgent
+from utils.utils import test
 from omegaconf import DictConfig, OmegaConf
 
 warnings.filterwarnings("ignore")
@@ -25,6 +26,7 @@ def main(args: DictConfig) -> None:
         env = SimplePickup(max_steps=args_gen.max_ep_len, agent_view_size=5, size=7)
     dqn_agent = DQNAgent(env, args_gen, policy_config, policy_network_cfg, policy_optim_cfg, save_path)
     dqn_agent.learn()
+    test(env, dqn_agent, "Videos/DQN_agent", n_episode=20)
     
 if __name__ == "__main__":
     wandb.init(project="Imagination_DQN_training")

@@ -21,32 +21,34 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train_imagination_net(config,
                           env, 
-                          vae, 
+                          goal_vector, 
                           agent, 
                           dataloader, 
                           checkpoint_interval, 
                           checkpoint_dir,
-                          num_goals):
-    hidden_layers = config.hidden_layers
+                          num_goals,
+                          sentence_encoder):
     imagination_net = ImaginationNet(env = env,
-                                     hidden_layers = hidden_layers,
+                                     config = config,
                                      num_goals = num_goals,
-                                     vae = vae,
-                                     agent = agent).to(device)
+                                     goal_vector = goal_vector,
+                                     agent = agent,
+                                     sentence_encoder = sentence_encoder).to(device)
     # wandb.watch(imagination_net)
     #Creating the optimizer
     optimizer = optim.Adam(imagination_net.parameters(), lr=config['lr'])
     # nn_utils.clip_grad_norm_(imagination_net.parameters(), max_norm=config['max_gradient'])
-    for epoch in range(config.epoch):
+    for epoch in range(config.Network.epoch):
         total_loss = 0
         total_class_loss = 0
         total_policy_loss = 0
         total_proximity_loss = 0
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{config.epoch}")
-        for batch in pbar:
-            data = batch.float().to(device)
+        pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{config.Network.epoch}")
+        for data, caption in pbar:
+            data = data.float().to(device)
             optimizer.zero_grad()
-            loss, class_loss, policy_loss, proximity_loss  = imagination_net.compute_loss(data)
+            imagined_state = imagination_net(data, caption)
+            loss, class_loss, policy_loss, proximity_loss  = imagination_net.compute_loss(data, imagined_state)
             loss.backward()
             optimizer.step()
             # Accumulate losses
@@ -66,17 +68,23 @@ def train_imagination_net(config,
                    "Policy loss" : average_policy_loss,
                    "Proximity loss" : average_proximity_loss}, step = epoch)
         # Save checkpoint at specified intervals
-        if epoch % checkpoint_interval == 0 or epoch == config['epoch']:
-            checkpoint_path = os.path.join(checkpoint_dir, f'imagination_net_epoch_{epoch}.pth')
+        if epoch % checkpoint_interval == 0:
+            checkpoint_path = os.path.join(checkpoint_dir, f'imagination_net_epoch_{epoch}.tar')
             imagination_net.save(checkpoint_path)
         # print(f"Epoch {epoch}/{epochs} - Loss: {average_loss:.4f}, Recon Loss: {average_recon:.4f}, KL Divergence: {average_kl:.4f}, KL Weight: {kl_weight:.4f}")
+    imagination_net.save('models/imagination_net.pth')
     print("Training complete.")
 
 @hydra.main(version_base=None, config_path="config", config_name="imagination_net_master_config")
 def main(args: DictConfig) -> None:
     # Log the configuration
     wandb.config.update(OmegaConf.to_container(args, resolve=True))
+    #Loading the dataset
     dataset = get_data(f'{args.General.datapath}/{args.General.encoder_model}/data.pkl')
+    captions = get_data(f'{args.General.datapath}/{args.General.encoder_model}/captions.pkl')
+    # Initialize dataset and dataloader
+    data = TwoListDataset(dataset, captions)
+    dataloader = DataLoader(data, batch_size=args.Network.batch_size, shuffle=True)
     if args.General.env ==  "SimplePickup":
         from env.env import SimplePickup
         env = SimplePickup(max_steps=args.General.max_ep_len, agent_view_size=5, size=7)
@@ -84,36 +92,34 @@ def main(args: DictConfig) -> None:
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
-    
-    # Initialize dataset and dataloader
-    dataset = TextDataset(dataset)
-    dataloader = DataLoader(dataset, batch_size=args.Network.batch_size, shuffle=True)
-        
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
     goal_gen = GetLLMGoals()
     goals = goal_gen.llmGoals([])
     # Load the sentecebert model to get the embedding of the goals from the LLM
     sentencebert = SentenceTransformer(args.General.encoder_model)
+    for params in sentencebert.parameters():
+        params.requires_grad = False
     # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
-    mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
+    with torch.no_grad():
+        mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device, show_progress_bar=False)
     # Define prior means (mu_p) for each mixture component
     # Initialize VAE with learnable prior means
-    latent_dim = sentencebert.get_sentence_embedding_dimension()
-    num_mixtures = len(goals)
-    vae = GMVAE(
-        input_dim = dataset[0].shape[0], 
-        encoder_hidden = args.Network.encoder_hidden,
-        decoder_hidden = args.Network.decoder_hidden, 
-        latent_dim=latent_dim, 
-        num_mixtures=num_mixtures, 
-        mu_p=mu_p
-    )
+    # latent_dim = sentencebert.get_sentence_embedding_dimension()
+    # num_mixtures = len(goals)
+    # vae = GMVAE(
+    #     input_dim = dataset[0].shape[0], 
+    #     encoder_hidden = args.Network.encoder_hidden,
+    #     decoder_hidden = args.Network.decoder_hidden, 
+    #     latent_dim=latent_dim, 
+    #     num_mixtures=num_mixtures, 
+    #     mu_p=mu_p
+    # )
     #Loading the pretrained VAE
-    vae.load(args.General.vae_checkpoint)
-    vae.to(device)
+    # vae.load(args.General.vae_checkpoint)
+    # vae.to(device)
     #Freezing the VAE weight to prevent updating
-    for params in vae.parameters():
-        params.requires_grad = False
+    # for params in vae.parameters():
+    #     params.requires_grad = False
         
     if args.General.agent == 'dqn':
         agent = DQNAgent(env, 
@@ -139,14 +145,15 @@ def main(args: DictConfig) -> None:
     os.makedirs(model_dir, exist_ok=True)
     
     #Train imagination Net
-    train_imagination_net(config = args.Network, 
+    train_imagination_net(config = args, 
                           env= env,
-                          vae = vae, 
+                          goal_vector = mu_p, 
                           agent = agent, 
                           dataloader = dataloader, 
                           checkpoint_interval = args.Network.checkpoint_interval, 
                           checkpoint_dir = model_dir,
-                          num_goals = len(goals))
+                          num_goals = len(goals),
+                          sentence_encoder = sentencebert)
     
 if __name__ == "__main__":
     wandb.init(project="Imagination-net_training")

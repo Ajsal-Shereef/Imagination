@@ -1,7 +1,7 @@
 General:
   env : "SimplePickup"
   max_ep_len : 20
-  iteration_num : 20000
+  iteration_num : 10000
   load_from : ""
 policy_config:
   gamma : 0.8
@@ -31,7 +31,7 @@ policy_config:
   n_random_cae_sample : 0
   cae_batch_size : 32
 policy_network_cfg:
-  fc_input_size : 504
+  fc_input_size : 79
   hidden_size : [256,512,512]
   lr_dqn : 1e-4 
   adam_eps : 1e-6

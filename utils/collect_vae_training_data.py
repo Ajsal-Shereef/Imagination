@@ -3,6 +3,7 @@ import argparse
 import os
 import pickle
 import random
+import numpy as np
 from collections import deque
 
 import minigrid
@@ -14,7 +15,7 @@ from sentence_transformers import SentenceTransformer
 import sys
 sys.path.append('.')
 
-from env.env import preprocess_observation
+from env.env import calculate_probabilities, generate_caption
 
 encoder = "all-MiniLM-L12-v2"
 
@@ -183,6 +184,7 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     """
     data = []
     captions = []
+    class_prob = []
     
     # Load the sentecebert model to get the embedding of the goals from the LLM
     sentencebert = SentenceTransformer(encoder)
@@ -209,9 +211,14 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     
     for episode in range(1, episodes + 1):
         state, info = env.reset()
-        caption = env.generate_caption(env.get_unprocesed_obs())
+        obj, caption = generate_caption(env.get_unprocesed_obs()['image'])
+        
         # frame = env.get_frame()
         # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # cv2.imwrite("frame.png",frame)
+        
+        prob = calculate_probabilities(env.agent_pos, env.get_unprocesed_obs()['image'], env.get_unprocesed_obs()['direction'], (1,5), (5,5))
+        class_prob.append(prob)
         caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
         captions.append(caption_encoding)
         #caption = state_captioner.generate_caption(state)
@@ -228,10 +235,15 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
                 action = select_action_q_network(q_network, state, device)
             
             next_state, reward, terminated, truncated, info = env.step(action)
+            
             # frame = env.get_frame()
             # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # cv2.imwrite("frame.png",frame)
+            
+            prob = calculate_probabilities(env.agent_pos, env.get_unprocesed_obs()['image'], env.get_unprocesed_obs()['direction'], (1,5), (5,5))
+            class_prob.append(prob)
             done = terminated + truncated
-            caption = env.generate_caption(env.get_unprocesed_obs())
+            obj, caption = generate_caption(env.get_unprocesed_obs()['image'])
             caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
             captions.append(caption_encoding)
             # next_state = preprocess_observation(next_state)
@@ -244,7 +256,7 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
         print(f"Episode {episode}/{episodes} finished after {step} steps.")
     
     env.close()
-    return data, captions
+    return data, captions, class_prob
 
 # =============================
 # 5. Main Function
@@ -268,11 +280,12 @@ def main():
     os.makedirs(data_dir, exist_ok=True)
     
     if env_name == "SimplePickup":
-        from env.env import SimplePickup
+        from env.env import SimplePickup #TransitionCaptioner
         env = SimplePickup(max_steps=max_steps, agent_view_size=5, size=7)
+        # transition_captioner = 
     
     # Collect data
-    data, captions = collect_data(
+    data, captions, class_prob = collect_data(
         env=env,
         use_random=use_random,
         q_network_path=q_network_path,
@@ -291,6 +304,11 @@ def main():
     with open(data_path, 'wb') as f:
         pickle.dump(captions, f)
     print(f"Collected {len(captions)} captions and saved to {data_path}")
+    
+    data_path = os.path.join(data_dir, 'class_prob.pkl')
+    with open(data_path, 'wb') as f:
+        pickle.dump(class_prob, f)
+    print(f"Collected {len(captions)} class prob and saved to {data_path}")
 # =============================
 # 6. Entry Point
 # =============================

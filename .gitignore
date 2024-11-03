@@ -3,3 +3,9 @@ visualizations
 models
 data
 Videos
+logs
+outputs
+*__pycache__
+*.pyc
+*.pth
+

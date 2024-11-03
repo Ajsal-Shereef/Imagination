@@ -132,13 +132,14 @@ class DQNAgent(nn.Module):
         if (epsilon > np.random.random() or self.total_step < self.hyper_params.init_random_actions):
             selected_action = self.env.action_space.sample()
         else:
-            self.dqn.eval()
+            if not isinstance(state, torch.Tensor):
+                state = torch.tensor(state).unsqueeze(0).float().to(device)
             with torch.no_grad():
-                state = torch.tensor(state).float().to(device)
-                policy_dqn_output = self.dqn(state.unsqueeze(0))
-                policy_dqn_output = policy_dqn_output.squeeze(0)
-                policy_dqn_output = policy_dqn_output.detach().cpu().numpy()
-            self.dqn.train()
+                policy_dqn_output = self.dqn(state)
+            policy_dqn_output = policy_dqn_output.squeeze(0)
+            if policy_dqn_output.dim() != 1:
+                return torch.argmax(policy_dqn_output, dim=-1)
+            policy_dqn_output = policy_dqn_output.detach().cpu().numpy()
             selected_action = np.argmax(policy_dqn_output)
         return selected_action
     
@@ -331,6 +332,9 @@ class DQNAgent(nn.Module):
         if self.total_step >= self.hyper_params.init_random_actions:
             self.safety_advising_threshold = max(self.min_safety_advising_threshold, 
                                                  self.safety_advising_threshold_decay * self.safety_advising_threshold)
+            
+    def set_episode_step(self):
+        self.total_step = self.hyper_params.init_random_actions + 1
             
 
 

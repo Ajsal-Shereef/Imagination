@@ -48,7 +48,6 @@ class MLP(nn.Module):
         linear_layer=nn.Linear,
         use_output_layer=True,
         n_category=-1,
-        drop_out = 0,
         init_fn=init_layer_uniform,
         dropout_prob = 0
     ):

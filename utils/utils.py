@@ -167,7 +167,7 @@ def write_video(frames, episode, dump_dir, frameSize = (224, 224)):
         video.write(img)
     video.release()
             
-def test(config, env, agent, save_dir, n_episode=5):
+def test(env, agent, save_dir, n_episode=5):
     for i_episode in range(int(n_episode)):
         frame_array = []
         state, info = env.reset()

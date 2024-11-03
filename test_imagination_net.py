@@ -8,16 +8,17 @@ import gymnasium as gym
 from env.env import reverse_preprocess_observation
 from vae.vae import GMVAE
 from sac_agent.agent import SAC
+from dqn.dqn import DQNAgent
 from utils.utils import write_video
 # from gymnasium.wrappers import RecordVideo
 from omegaconf import DictConfig
-# from utils.get_llm_output import GetLLMGoals
-# from sentence_transformers import SentenceTransformer
+from utils.get_llm_output import GetLLMGoals
+from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 
-is_sac_agent = True
+is_agent = False
 
-@hydra.main(version_base=None, config_path="config", config_name="imagination_net")
+@hydra.main(version_base=None, config_path="config", config_name="imagination_net_master_config")
 def main(args: DictConfig) -> None:
     if args.General.env ==  "SimplePickup":
         from env.env import SimplePickup
@@ -27,54 +28,63 @@ def main(args: DictConfig) -> None:
     print(f"Using device: {device}")
     
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
-    # goal_gen = GetLLMGoals()
-    # goals = goal_gen.llmGoals([])
+    goal_gen = GetLLMGoals()
+    goals = goal_gen.llmGoals([])
     # Load the sentecebert model to get the embedding of the goals from the LLM
-    # sentencebert = SentenceTransformer(args.General.encoder_model)
+    sentencebert = SentenceTransformer(args.General.encoder_model)
     # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
-    # mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
+    mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
     # Define prior means (mu_p) for each mixture component
     # Initialize VAE with learnable prior means
-    mu_p = torch.randn(2, 384)
+    # mu_p = torch.randn(2, 384)
     # latent_dim = sentencebert.get_sentence_embedding_dimension()
     latent_dim = 384
     num_mixtures = 2
-    vae = GMVAE(
-        input_dim = 504, 
-        encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
-        decoder_hidden = [256,256], 
-        latent_dim=latent_dim, 
-        num_mixtures=num_mixtures, 
-        mu_p=mu_p
-    )
-    #Loading the pretrained VAE
-    vae.load(args.General.vae_checkpoint)
-    vae.to(device)
+    # vae = GMVAE(
+    #     input_dim = 504, 
+    #     encoder_hidden = [1024,1024,512,512,512,256,256,256,256], #Don't forget to edit the snippet above as well
+    #     decoder_hidden = [256,256], 
+    #     latent_dim=latent_dim, 
+    #     num_mixtures=num_mixtures, 
+    #     mu_p=mu_p
+    # )
+    # #Loading the pretrained VAE
+    # vae.load(args.General.vae_checkpoint)
+    # vae.to(device)
     
     #Freezing the VAE weight to prevent updating
-    for params in vae.parameters():
-        params.requires_grad = False
+    # for params in vae.parameters():
+    #     params.requires_grad = False
     
-    sac_agent = SAC(args,
+    if args.General.agent == 'dqn':
+        agent = DQNAgent(env, 
+                        args.General, 
+                        args.policy_config, 
+                        args.policy_network_cfg, 
+                        args.policy_network_cfg, '')
+    else:
+        agent = SAC(args,
                     state_size = env.observation_space.shape[0],
                     action_size = env.action_space.n,
                     device=device,
                     buffer_size = args.General.buffer_size)
     #Loading the pretrained weight of sac agent.
-    sac_agent.load_params(args.General.sac_agent_checkpoint)
+    agent.load_params(args.General.agent_checkpoint)
     #Freezing the SAC agent weight to prevent updating
-    for params in sac_agent.parameters():
+    for params in agent.parameters():
         params.requires_grad = False
         
-    imagination_net = ImaginationNet(input_dim = 504,
-                                     hidden_layers = [256, 512, 512],
+    imagination_net = ImaginationNet(env = env,
+                                     config = args,
                                      num_goals = num_mixtures,
-                                     vae = vae,
-                                     sac = sac_agent).to(device)
-    imagination_net.load("models/imagination_net/imagination_net_epoch_20000.pth")
+                                     goal_vector = mu_p,
+                                     agent = agent,
+                                     sentence_encoder = sentencebert).to(device)
+    imagination_net.load("models/imagination_net/imagination_net_epoch_400.tar")
+    imagination_net.eval()
         
     # Create data directory if it doesn't exist
-    if is_sac_agent:
+    if is_agent:
         video_dir = "Videos/Original"
     else:
         video_dir = "Videos/Imagination"
@@ -88,24 +98,25 @@ def main(args: DictConfig) -> None:
         episode_steps = 0
         while True:
             env.render()
-            if is_sac_agent:
+            if is_agent:
                 with torch.no_grad():
-                    action = sac_agent.get_action(state)
+                    action = agent.get_action(state)
             else:
                 with torch.no_grad():
-                    imagined_state = imagination_net(state)
+                    caption = env.generate_caption(state[:-4].reshape((5,5,3)))
+                    caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device, show_progress_bar=False)
+                    imagined_state = imagination_net(state, caption_encoding)
                 imagined_state = imagined_state.squeeze(0).detach().cpu().numpy()
-                r0 = reverse_preprocess_observation(np.round(imagined_state[0]).astype(int),5,5)
-                r1 = reverse_preprocess_observation(np.round(imagined_state[1]).astype(int),5,5)
-                difference0 = np.argmax(np.abs(imagined_state[0] - state))
-                difference1 = np.argmax(np.abs(imagined_state[1] - state))
-                diff_value0 = imagined_state[0][np.argmax(np.abs(imagined_state[0] - state))]
-                diff_value1 = imagined_state[1][np.argmax(np.abs(imagined_state[1] - state))]
-                action = sac_agent.get_action(imagined_state[0])
-            next_state, reward, terminated, truncated, _ = env.step(action)
+                caption = env.generate_caption(np.round(imagined_state[0][:-4].reshape((5,5,3))))
+                # difference0 = np.argmax(np.abs(imagined_state[0] - state))
+                # difference1 = np.argmax(np.abs(imagined_state[1] - state))
+                # diff_value0 = imagined_state[0][np.argmax(np.abs(imagined_state[0] - state))]
+                # diff_value1 = imagined_state[1][np.argmax(np.abs(imagined_state[1] - state))]
+                action = agent.get_action(imagined_state[0])
             frame = env.get_frame()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame_arrays.append(frame)
+            next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated + truncated
             state = next_state
             episode_steps += 1
