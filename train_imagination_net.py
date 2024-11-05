@@ -81,9 +81,9 @@ def main(args: DictConfig) -> None:
     wandb.config.update(OmegaConf.to_container(args, resolve=True))
     #Loading the dataset
     dataset = get_data(f'{args.General.datapath}/{args.General.encoder_model}/data.pkl')
-    captions = get_data(f'{args.General.datapath}/{args.General.encoder_model}/captions.pkl')
+    # captions = get_data(f'{args.General.datapath}/{args.General.encoder_model}/captions.pkl')
     # Initialize dataset and dataloader
-    data = TwoListDataset(dataset, captions)
+    # data = TwoListDataset(dataset, captions)
     dataloader = DataLoader(data, batch_size=args.Network.batch_size, shuffle=True)
     if args.General.env ==  "SimplePickup":
         from env.env import SimplePickup
@@ -93,15 +93,15 @@ def main(args: DictConfig) -> None:
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
     # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
-    goal_gen = GetLLMGoals()
-    goals = goal_gen.llmGoals([])
+    # goal_gen = GetLLMGoals()
+    # goals = goal_gen.llmGoals([])
     # Load the sentecebert model to get the embedding of the goals from the LLM
-    sentencebert = SentenceTransformer(args.General.encoder_model)
-    for params in sentencebert.parameters():
-        params.requires_grad = False
+    # sentencebert = SentenceTransformer(args.General.encoder_model)
+    # for params in sentencebert.parameters():
+    #     params.requires_grad = False
     # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
-    with torch.no_grad():
-        mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device, show_progress_bar=False)
+    # with torch.no_grad():
+    #     mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device, show_progress_bar=False)
     # Define prior means (mu_p) for each mixture component
     # Initialize VAE with learnable prior means
     # latent_dim = sentencebert.get_sentence_embedding_dimension()

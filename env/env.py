@@ -101,17 +101,17 @@ def calculate_probabilities(agent_position, observation, agent_direction, red_ba
     if "red ball" in object:
         score_red = (-distance_red) + (5 if facing_red else 0)
     else:
-        score_red = 0
+        score_red = -10
     if "green ball" in object:
         score_green = (-distance_green) + (5 if facing_green else 0)
     else:
-        score_green = 0
+        score_green = -10
     
     # Convert scores to probabilities using softmax
     exp_scores = np.exp([score_red, score_green])
     probabilities = exp_scores / np.sum(exp_scores)
     
-    return {"red_ball": probabilities[0], "green_ball": probabilities[1]}
+    return probabilities
 
 
 # def preprocess_observation(obs):

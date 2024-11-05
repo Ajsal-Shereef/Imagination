@@ -213,9 +213,9 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
         state, info = env.reset()
         obj, caption = generate_caption(env.get_unprocesed_obs()['image'])
         
-        # frame = env.get_frame()
-        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # cv2.imwrite("frame.png",frame)
+        frame = env.get_frame()
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        cv2.imwrite("previous_frame.png",frame)
         
         prob = calculate_probabilities(env.agent_pos, env.get_unprocesed_obs()['image'], env.get_unprocesed_obs()['direction'], (1,5), (5,5))
         class_prob.append(prob)
@@ -236,9 +236,9 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             
             next_state, reward, terminated, truncated, info = env.step(action)
             
-            # frame = env.get_frame()
-            # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # cv2.imwrite("frame.png",frame)
+            frame = env.get_frame()
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            cv2.imwrite("frame.png", frame)
             
             prob = calculate_probabilities(env.agent_pos, env.get_unprocesed_obs()['image'], env.get_unprocesed_obs()['direction'], (1,5), (5,5))
             class_prob.append(prob)
@@ -276,7 +276,7 @@ def main():
     print(f"Using device: {device}")
     
     # Create data directory if it doesn't exist
-    data_dir = f'data/{encoder}'
+    data_dir = f'data/{env_name}'
     os.makedirs(data_dir, exist_ok=True)
     
     if env_name == "SimplePickup":

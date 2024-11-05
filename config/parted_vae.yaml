@@ -1,0 +1,31 @@
+General:
+  env : "SimplePickup"
+  load_model_path : 'models/'
+  datapath : "data"
+  LOAD_MODEL : false
+  TRAIN : true
+  WARM_UP : true
+  num_goals : 2
+Training:
+  input_dim : 79
+  encoder_hidden_dim : [512]
+  decoder_hidden_dim : [512]
+  output_size : 32
+  epochs : 80000
+  batch_size : 64
+  lr_warm_up : 5e-4
+  lr_model : 5e-4
+  z_capacity : [0., 7.0, 100000, 15]
+  u_capacity : [0., 7.0, 100000, 15]
+  g_c : 15.
+  g_h : 30.
+  g_bc : 30.
+  bc_threshold : 0.15
+  latent_spec : {
+                  'z': 6,
+                  'c': [2],
+                  'single_u': 2
+                }
+  recon_loss : 'mse'
+  save_freequency : 5000
+  

@@ -8,4 +8,4 @@ outputs
 *__pycache__
 *.pyc
 *.pth
-
+*.cpython-39.pyc

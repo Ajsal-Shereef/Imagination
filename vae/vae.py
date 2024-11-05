@@ -177,7 +177,7 @@ class GMVAE(nn.Module):
         encoded_data = self.encode(x)
         inference_net_out = self.inference_model(encoded_data, self.num_mixtures)
         reconstructed_data = self.generative_model(inference_net_out['latent'])
-        return inference_net_out, reconstructed_data
+        return reconstructed_data, inference_net_out
     
     def kl_divergence_loss(self, inference_out, captions):
         """

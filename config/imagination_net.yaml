@@ -3,7 +3,7 @@ General:
   max_ep_len : 20
   encoder_model : "all-MiniLM-L12-v2"
   datapath : "data"
-  vae_checkpoint : "models/all-MiniLM-L12-v2/Feature_based/vae_normal.pth"
+  vae_checkpoint : "models/parted_vae/parted_vae_45000.pth"
   buffer_size : 3000_00
   agent : 'sac'
   agent_checkpoint : "models/sac_agent/SAC_discrete.tar"

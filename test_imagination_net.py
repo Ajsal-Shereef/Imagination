@@ -16,7 +16,7 @@ from utils.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 
-is_agent = False
+is_agent = True
 
 @hydra.main(version_base=None, config_path="config", config_name="imagination_net_master_config")
 def main(args: DictConfig) -> None:
