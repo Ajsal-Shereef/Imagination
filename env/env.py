@@ -434,17 +434,17 @@ class SimplePickup(MiniGridEnv):
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
         
-        # # Place a ball square in the bottom-right corner
-        self.put_obj(Ball(color='green'), width-2, height-2)
+        # # # Place a ball square in the bottom-right corner
+        # self.grid.set(width-2, height-2, Ball(color='green'))
         
-        # # Place a ball square in the bottom-right corner
-        self.put_obj(Ball(color='red'), 1, height-2)
+        # # # Place a ball square in the bottom-right corner
+        # self.grid.set(1, height-2, Ball(color='red'))
         
         # Place one green ball at a random position
-        # self.place_obj(Ball('green'), max_tries=100)
+        self.green_ball_loc = self.place_obj(Ball('green'), max_tries=100)
 
         # Place one red ball at a random position
-        # self.place_obj(Ball('red'), max_tries=100)
+        self.red_ball_loc = self.place_obj(Ball('red'), max_tries=100)
 
         # Place the agent
         if self.agent_start_pos is not None:
@@ -574,5 +574,6 @@ class SimplePickup(MiniGridEnv):
         if isinstance(self.carrying, Ball) and self.carrying.color == 'green':
             reward = self._reward()
             terminated = True
-
+        elif isinstance(self.carrying, Ball) and self.carrying.color == 'red':
+            terminated = True
         return obs, reward, terminated, truncated, info

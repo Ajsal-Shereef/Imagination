@@ -23,7 +23,8 @@ def main(args: DictConfig) -> None:
     captions = get_data(f'{args.General.datapath}/{args.General.env}/captions.pkl')
     class_probs = get_data(f'{args.General.datapath}/{args.General.env}/class_prob.pkl')
     
-    dataset, labelled_data, unused_label, labels = train_test_split(datasets, class_probs, test_size=0.01, random_state=42)
+    dataset, labelled_data, unused_label, labels = train_test_split(datasets, class_probs, test_size=0.023, random_state=42)
+    print("[INFO] Number of labelled data: ", len(labelled_data))
     
     # Initialize dataset and dataloader
     dataloader = TwoListDataset(dataset, unused_label)
@@ -55,6 +56,8 @@ def main(args: DictConfig) -> None:
                 save_dir = save_dir,
                 device=device)
     
+    wandb.watch(model)
+
     if args.General.LOAD_MODEL:
         # Note: When you load a model, capacities are restarted, which isn't intuitive if you are gonna re-train it
         model = model.load(save_dir, device=device)

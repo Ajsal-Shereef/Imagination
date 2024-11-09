@@ -29,7 +29,7 @@ def main(args: DictConfig) -> None:
                 save_dir=save_dir,
                 device=device)
     
-    model.load("models/parted_vae/parted_vae_5000.pth")
+    model.load("models/parted_vae/parted_vae_55000.pth")
     model.to(device)
     model.eval()
     total_step = 0
@@ -41,20 +41,28 @@ def main(args: DictConfig) -> None:
             total_step += 1
             vae_input = torch.tensor(next_state).unsqueeze(0).float().to(device)
             with torch.no_grad():
-                reconstruction, latent_sample, inference_out = model(vae_input)
+                reconstruction, inference_out = model(vae_input)
             cluster_prob = torch.exp(inference_out['log_c'])
             frame = env.get_frame()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             if cluster_prob[0][0] > 0.85:
-                prob = calculate_probabilities(env.agent_pos, env.get_unprocesed_obs()['image'], env.get_unprocesed_obs()['direction'], (1,5), (5,5))
+                prob = calculate_probabilities(env.agent_pos, 
+                                       env.get_unprocesed_obs()['image'], 
+                                       env.get_unprocesed_obs()['direction'], 
+                                       env.red_ball_loc, 
+                                       env.green_ball_loc)
                 print("First gaussian is greater than 85% " + generate_caption(env.get_unprocesed_obs()['image'])[1])
             elif cluster_prob[0][1] > 0.85:
-                prob = calculate_probabilities(env.agent_pos, env.get_unprocesed_obs()['image'], env.get_unprocesed_obs()['direction'], (1,5), (5,5))
+                prob = calculate_probabilities(env.agent_pos, 
+                                       env.get_unprocesed_obs()['image'], 
+                                       env.get_unprocesed_obs()['direction'], 
+                                       env.red_ball_loc, 
+                                       env.green_ball_loc)
                 print("Second gaussian is greater than 85% " + generate_caption(env.get_unprocesed_obs()['image'])[1])
-            # elif cluster_prob[0][1] > 0.40 and cluster_prob[0][1] < 0.60:
-            #     print("Second gaussian is between 40 and 60 " + generate_caption(env.get_unprocesed_obs()['image'])[1])
-            # elif cluster_prob[0][0] > 0.40 and cluster_prob[0][0] < 0.60:
-            #     print("First gaussian is between 40 and 60 " + generate_caption(env.get_unprocesed_obs()['image'])[1])
+            elif cluster_prob[0][1] > 0.40 and cluster_prob[0][1] < 0.60:
+                print("Second gaussian is between 40 and 60 " + generate_caption(env.get_unprocesed_obs()['image'])[1])
+            elif cluster_prob[0][0] > 0.40 and cluster_prob[0][0] < 0.60:
+                print("First gaussian is between 40 and 60 " + generate_caption(env.get_unprocesed_obs()['image'])[1])
             done = terminated + truncated
             state = next_state
             if done:

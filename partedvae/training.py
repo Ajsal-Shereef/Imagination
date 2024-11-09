@@ -86,10 +86,11 @@ class Trainer:
                               'Class loss': separated_mean_epoch_loss[3],
                               'Prior class loss': separated_mean_epoch_loss[4]})
             wandb.log({
+                'Classification loss' : warm_up_mean_loss,
                 'Loss': separated_mean_epoch_loss[0], 
                 'Recon': separated_mean_epoch_loss[1], 
-                'Prior_loss': separated_mean_epoch_loss[2], 
-                'Class loss': separated_mean_epoch_loss[3],
+                'Z KL divergence': separated_mean_epoch_loss[2], 
+                'U KL divergence': separated_mean_epoch_loss[3],
                 'Prior class loss': separated_mean_epoch_loss[4],
                 'Class entropy loss' : separated_mean_epoch_loss[5],
                 'Class interesection loss' : separated_mean_epoch_loss[6]
@@ -125,6 +126,10 @@ class Trainer:
             sum_ce = torch.sum(-1 * label * latent_dist['log_c'], dim=1)
             loss = torch.mean(sum_ce)
             loss.backward()
+            # Clip gradients 
+            torch.nn.utils.clip_grad_value_(self.model.parameters(), clip_value=10.0)
+            # Log the gradient norm to verify clipping
+            # wandb.log({"gradient_norm": grad_norm})
             self.optimizer_warm_up.step()
             epoch_loss += loss.item()
             return epoch_loss
@@ -133,18 +138,22 @@ class Trainer:
         self.num_steps += 1
         data = data.to(self.device)
 
-        recon_batch, latent, latent_dist = self.model(data.float())
+        recon_batch, latent_dist = self.model(data.float())
         loss, separated_mean_loss = self._loss_function(data, recon_batch, latent_dist)
         if np.isnan(separated_mean_loss[0]):
             raise Exception('NaN!')
 
         self.optimizer_model.zero_grad()
         loss.backward()
+        # Clip gradients 
+        torch.nn.utils.clip_grad_value_(self.model.parameters(), clip_value=10.0)
+        # Log the gradient norm to verify clipping
+        # wandb.log({"gradient_norm": grad_norm})
         # Applying partially connected layers
-        with torch.no_grad():
-            self.model.c_to_a_logit_pc.weight.grad.mul_(self.model.c_to_a_logit_mask)
-            self.model.h_dot_a_to_u_mean_pc.weight.grad.mul_(self.model.h_dot_a_to_u_mask)
-            self.model.h_dot_a_to_u_logvar_pc.weight.grad.mul_(self.model.h_dot_a_to_u_mask)
+        # with torch.no_grad():
+        #     self.model.c_to_a_logit_pc.weight.grad.mul_(self.model.c_to_a_logit_mask)
+        #     self.model.h_dot_a_to_u_mean_pc.weight.grad.mul_(self.model.h_dot_a_to_u_mask)
+        #     self.model.h_dot_a_to_u_logvar_pc.weight.grad.mul_(self.model.h_dot_a_to_u_mask)
         self.optimizer_model.step()
 
         return separated_mean_loss * data.size(0)
@@ -171,6 +180,8 @@ class Trainer:
             cap_current = (cap_max - cap_min) * self.num_steps / float(num_iters) + cap_min
             cap_current = min(cap_current, cap_max)
             z_loss = gamma * torch.abs(cap_current - z_kl)
+            # z_loss = gamma * z_kl
+            
 
         if self.model.has_dep:
             each_c_kl = self._each_c_kl_loss(latent_dist['log_c'])
@@ -184,6 +195,7 @@ class Trainer:
             cap_current = (cap_max - cap_min) * self.num_steps / float(num_iters) + cap_min
             cap_current = min(cap_current, cap_max)
             u_loss = gamma * torch.abs(cap_current - torch.sum(each_u_expected_kl))
+            # u_loss = gamma*torch.sum(each_u_expected_kl)
 
             bc = self._bhattacharyya_coefficient_inter_priors(self.model.u_prior_means, self.model.u_prior_logvars, self.u_valid_prior_BC_mask)
             priors_intersection_loss = self.bc_gamma * torch.sum(torch.clamp_min(bc - self.bc_threshold, min=0))

@@ -28,7 +28,7 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
                 # sentences = list(sentences)
                 data = data.float().to(device)
                 # Forward pass
-                reconstruction, latent_sample, inference_out = model(data)
+                reconstruction, inference_out = model(data)
                 labels = torch.exp(inference_out['log_c'])
                 latent = inference_out['u'][0]
                 all_z.append(latent.cpu().numpy())
@@ -78,7 +78,7 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
 def main(args: DictConfig) -> None:
     #Loading the dataset
     datasets = get_data(f'{args.General.datapath}/{args.General.env}/data.pkl')
-    captions = get_data(f'{args.General.datapath}/{args.General.env}/captions.pkl')
+    # captions = get_data(f'{args.General.datapath}/{args.General.env}/captions.pkl')
     class_probs = get_data(f'{args.General.datapath}/{args.General.env}/class_prob.pkl')
     
     # Initialize dataset and dataloader
@@ -97,7 +97,7 @@ def main(args: DictConfig) -> None:
                 c_priors=disc_priors, 
                 save_dir=save_dir,
                 device=device)
-    model.load("models/parted_vae/parted_vae_45000.pth")
+    model.load("models/parted_vae/parted_vae_55000.pth")
     model.to(device)
     model.eval()
     

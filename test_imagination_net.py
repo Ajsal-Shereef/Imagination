@@ -4,6 +4,7 @@ import hydra
 import torch
 import numpy as np
 import gymnasium as gym
+from partedvae.models import VAE
 
 from env.env import reverse_preprocess_observation
 from vae.vae import GMVAE
@@ -16,12 +17,12 @@ from utils.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 
-is_agent = True
+is_agent = False
 
 @hydra.main(version_base=None, config_path="config", config_name="imagination_net_master_config")
 def main(args: DictConfig) -> None:
     if args.General.env ==  "SimplePickup":
-        from env.env import SimplePickup
+        from env.env import SimplePickup, generate_caption
         env = SimplePickup(max_steps=args.General.max_ep_len, agent_view_size=5, size=7, render_mode="rgb_array")
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -74,13 +75,27 @@ def main(args: DictConfig) -> None:
     for params in agent.parameters():
         params.requires_grad = False
         
+    #Loading Parted VAE
+    latent_spec = args.Training.latent_spec
+    disc_priors = [[1/args.General.num_goals]*args.General.num_goals]
+    
+    vae = VAE(args.Training.input_dim, 
+              args.Training.encoder_hidden_dim, 
+              args.Training.decoder_hidden_dim, 
+              args.Training.output_size, 
+              latent_spec, 
+              c_priors=disc_priors, 
+              save_dir='',
+              device=device)
+    vae.load(args.General.vae_checkpoint)
+        
     imagination_net = ImaginationNet(env = env,
                                      config = args,
-                                     num_goals = num_mixtures,
-                                     goal_vector = mu_p,
-                                     agent = agent,
-                                     sentence_encoder = sentencebert).to(device)
-    imagination_net.load("models/imagination_net/imagination_net_epoch_400.tar")
+                                     num_goals = 2,
+                                     vae = vae,
+                                     agent = agent).to(device)
+        
+    imagination_net.load("models/imagination_net/imagination_net_epoch_1000.tar")
     imagination_net.eval()
         
     # Create data directory if it doesn't exist
@@ -103,20 +118,24 @@ def main(args: DictConfig) -> None:
                     action = agent.get_action(state)
             else:
                 with torch.no_grad():
-                    caption = env.generate_caption(state[:-4].reshape((5,5,3)))
-                    caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device, show_progress_bar=False)
-                    imagined_state = imagination_net(state, caption_encoding)
-                imagined_state = imagined_state.squeeze(0).detach().cpu().numpy()
-                caption = env.generate_caption(np.round(imagined_state[0][:-4].reshape((5,5,3))))
+                    caption = generate_caption(state[:-4].reshape((5,5,3)))
+                    # caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device, show_progress_bar=False)
+                    imagined_state = imagination_net(state)
                 # difference0 = np.argmax(np.abs(imagined_state[0] - state))
                 # difference1 = np.argmax(np.abs(imagined_state[1] - state))
                 # diff_value0 = imagined_state[0][np.argmax(np.abs(imagined_state[0] - state))]
                 # diff_value1 = imagined_state[1][np.argmax(np.abs(imagined_state[1] - state))]
                 action = agent.get_action(imagined_state[0])
+                _, imagined_inference_out0 = vae(imagined_state[:,0,:])
+                imagined_class_prob0 = torch.exp(imagined_inference_out0['log_c'])
+                _, imagined_inference_out1 = vae(imagined_state[:,1,:])
+                imagined_class_prob1 = torch.exp(imagined_inference_out1['log_c'])
+                imagined_state = imagined_state.squeeze(0).detach().cpu().numpy()
+                caption = generate_caption(np.round(imagined_state[0][:-4].reshape((5,5,3))))
+            next_state, reward, terminated, truncated, _ = env.step(action)
             frame = env.get_frame()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame_arrays.append(frame)
-            next_state, reward, terminated, truncated, _ = env.step(action)
             done = terminated + truncated
             state = next_state
             episode_steps += 1

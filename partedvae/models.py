@@ -60,6 +60,9 @@ class VAE(nn.Module):
         self.input_dim = input_dim
         self.temperature = temperature
         self.hidden_dim = encoder_hidden_dim
+        
+        # Scale factor to avoid overly large attention scores
+        self.scale = 1.0 / (output_size ** 0.5)
 
         self.z_dim, self.single_dep_cont_dim, self.u_dim = 0, 0, 0
         self.c_dims, self.c_count, self.sum_c_dims = 0, 0, 0
@@ -94,32 +97,32 @@ class VAE(nn.Module):
             self.h_to_c_logit_fc = nn.Linear(output_size, self.sum_c_dims) #Softmax is performed in the forward method
 
             self.c_to_a_logit_pc = nn.Linear(self.sum_c_dims, self.c_count * output_size)  # A Sigmoid should be placed after this layer
-            self.c_to_a_logit_mask = torch.zeros(self.c_count * output_size, self.sum_c_dims, requires_grad=False)
-            h_start = 0
-            for i, h_size in enumerate(self.c_dims):
-                v_start, v_end = i * output_size, (i + 1) * output_size
-                h_end = h_start + h_size
-                indices = itertools.product(range(v_start, v_end), range(h_start, h_end))
-                self.c_to_a_logit_mask[list(zip(*indices))] = 1  # It actually unzips :D
-                h_start = h_end
-            with torch.no_grad():
-                self.c_to_a_logit_pc.weight.mul_(self.c_to_a_logit_mask)
+            # self.c_to_a_logit_mask = torch.zeros(self.c_count * output_size, self.sum_c_dims, requires_grad=False)
+            # h_start = 0
+            # for i, h_size in enumerate(self.c_dims):
+            #     v_start, v_end = i * output_size, (i + 1) * output_size
+            #     h_end = h_start + h_size
+            #     indices = itertools.product(range(v_start, v_end), range(h_start, h_end))
+            #     self.c_to_a_logit_mask[list(zip(*indices))] = 1  # It actually unzips :D
+            #     h_start = h_end
+            # with torch.no_grad():
+            #     self.c_to_a_logit_pc.weight.mul_(self.c_to_a_logit_mask)
 
             self.h_dot_a_to_u_mean_pc = nn.Linear(self.c_count * output_size, self.u_dim)
             self.h_dot_a_to_u_logvar_pc = nn.Linear(self.c_count * output_size, self.u_dim)
-            self.h_dot_a_to_u_mask = torch.zeros(self.u_dim, self.c_count * output_size, requires_grad=False)
-            for i, dim in enumerate(self.c_dims):
-                v_start, v_end = i * self.single_u_dim, (i + 1) * self.single_u_dim
-                h_start, h_end = i * output_size, (i + 1) * output_size
-                indices = itertools.product(range(v_start, v_end), range(h_start, h_end))
-                self.h_dot_a_to_u_mask[list(zip(*indices))] = 1
-            with torch.no_grad():
-                self.h_dot_a_to_u_mean_pc.weight.mul_(self.h_dot_a_to_u_mask)
-                self.h_dot_a_to_u_logvar_pc.weight.mul_(self.h_dot_a_to_u_mask)
+            # self.h_dot_a_to_u_mask = torch.zeros(self.u_dim, self.c_count * output_size, requires_grad=False)
+            # for i, dim in enumerate(self.c_dims):
+            #     v_start, v_end = i * self.single_u_dim, (i + 1) * self.single_u_dim
+            #     h_start, h_end = i * output_size, (i + 1) * output_size
+            #     indices = itertools.product(range(v_start, v_end), range(h_start, h_end))
+            #     self.h_dot_a_to_u_mask[list(zip(*indices))] = 1
+            # with torch.no_grad():
+            #     self.h_dot_a_to_u_mean_pc.weight.mul_(self.h_dot_a_to_u_mask)
+            #     self.h_dot_a_to_u_logvar_pc.weight.mul_(self.h_dot_a_to_u_mask)
 
-            # These lines should be after the multiplications in torch.no_grad(), because model (and therefore h_dot_e_to_u_mean_pc.weight) hasn't gone to GPU yet
-            self.c_to_a_logit_mask = self.c_to_a_logit_mask.to(self.device)
-            self.h_dot_a_to_u_mask = self.h_dot_a_to_u_mask.to(self.device)
+            # # These lines should be after the multiplications in torch.no_grad(), because model (and therefore h_dot_e_to_u_mean_pc.weight) hasn't gone to GPU yet
+            # self.c_to_a_logit_mask = self.c_to_a_logit_mask.to(self.device)
+            # self.h_dot_a_to_u_mask = self.h_dot_a_to_u_mask.to(self.device)
 
         # Decoder
         self.decoder = MLP(input_size = self.latent_dim,
@@ -152,22 +155,27 @@ class VAE(nn.Module):
     def encode(self, x, only_disc_dist=False):  # x: (N, C, H, W)
         batch_size = x.size()[0]
 
-        features = self.encoder(x)
+        h = self.encoder(x)
         latent_dist = dict()
         if self.has_dep:
-            c_logit = self.h_to_c_logit_fc(features)
+            c_logit = self.h_to_c_logit_fc(h)
             latent_dist['log_c'] = self.logsoftmaxer(c_logit)
             if only_disc_dist:
                 return latent_dist
 
             sampled_c = self.sample_gumbel_partial_softmax(c_logit)  # One hot (sort of)
             a_logit = self.c_to_a_logit_pc(sampled_c)
-            a = self.my_sigmoid(a_logit)
-            h_dot_a = features.repeat(1, self.c_count) * a
-            latent_dist['u'] = [self.h_dot_a_to_u_mean_pc(h_dot_a), self.h_dot_a_to_u_logvar_pc(h_dot_a)]
+            
+            # Compute the attention scores between h and a
+            scores = torch.matmul(h, a_logit.transpose(-2, -1)) * self.scale
+            attention_weights = F.softmax(scores, dim=-1)
+            # Apply attention weights to h
+            attended_h = torch.matmul(attention_weights, h)
+            
+            latent_dist['u'] = [self.h_dot_a_to_u_mean_pc(attended_h), self.h_dot_a_to_u_logvar_pc(attended_h)]
 
         if self.has_indep:
-            latent_dist['z'] = [self.z_mean_fc(features), self.z_logvar_fc(features)]
+            latent_dist['z'] = [self.z_mean_fc(h), self.z_logvar_fc(h)]
 
         return latent_dist
 
@@ -211,10 +219,10 @@ class VAE(nn.Module):
     def forward(self, x):
         latent_dist = self.encode(x)
         latent_sample = self.reparameterize(latent_dist)
-        return self.decode(latent_sample), latent_sample, latent_dist
+        return self.decode(latent_sample), latent_dist
     
     def load(self, path_to_model):
-        old_state_dict = torch.load(path_to_model, map_location=lambda storage, loc: storage)
+        old_state_dict = torch.load(path_to_model, map_location=self.device)
         # state_dict = OrderedDict()
         # for k, v in old_state_dict.items():
         #     k = k.replace('c1_dz_prior', 'u_prior')
@@ -234,4 +242,4 @@ class VAE(nn.Module):
     
     def save(self, epochs):
         torch.save(self.state_dict(), f'{self.save_dir}/parted_vae_{epochs}.pth')
-        print(f"[INFO] model save to {self.save_dir}/parted_vae_{epochs}.pt")
+        print(f"[INFO] model save to {self.save_dir}/parted_vae_{epochs}.pth")

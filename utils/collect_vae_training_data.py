@@ -80,7 +80,7 @@ def parse_arguments():
     parser.add_argument(
         '--episodes',
         type=int,
-        default=500,
+        default=1500,
         help='Number of episodes to run for data collection (default: 100)'
     )
     parser.add_argument(
@@ -213,11 +213,15 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
         state, info = env.reset()
         obj, caption = generate_caption(env.get_unprocesed_obs()['image'])
         
-        frame = env.get_frame()
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        cv2.imwrite("previous_frame.png",frame)
+        # frame = env.get_frame()
+        # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        # cv2.imwrite("previous_frame.png",frame)
         
-        prob = calculate_probabilities(env.agent_pos, env.get_unprocesed_obs()['image'], env.get_unprocesed_obs()['direction'], (1,5), (5,5))
+        prob = calculate_probabilities(env.agent_pos, 
+                                       env.get_unprocesed_obs()['image'], 
+                                       env.get_unprocesed_obs()['direction'], 
+                                       env.red_ball_loc, 
+                                       env.green_ball_loc)
         class_prob.append(prob)
         caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
         captions.append(caption_encoding)
@@ -236,11 +240,15 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             
             next_state, reward, terminated, truncated, info = env.step(action)
             
-            frame = env.get_frame()
-            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            cv2.imwrite("frame.png", frame)
+            # frame = env.get_frame()
+            # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # cv2.imwrite("frame.png", frame)
             
-            prob = calculate_probabilities(env.agent_pos, env.get_unprocesed_obs()['image'], env.get_unprocesed_obs()['direction'], (1,5), (5,5))
+            prob = calculate_probabilities(env.agent_pos, 
+                                           env.get_unprocesed_obs()['image'], 
+                                           env.get_unprocesed_obs()['direction'], 
+                                           env.red_ball_loc, 
+                                           env.green_ball_loc)
             class_prob.append(prob)
             done = terminated + truncated
             obj, caption = generate_caption(env.get_unprocesed_obs()['image'])

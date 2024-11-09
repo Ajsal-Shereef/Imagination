@@ -88,7 +88,7 @@ class TextDataset(Dataset):
         Returns:
             str: Sentence.
         """
-        return self.sentences[idx]
+        return self.sentences[idx], idx
     
 class TwoListDataset(Dataset):
     def __init__(self, list1, list2):

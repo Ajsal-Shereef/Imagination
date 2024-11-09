@@ -3,15 +3,17 @@ General:
   max_ep_len : 20
   encoder_model : "all-MiniLM-L12-v2"
   datapath : "data"
-  vae_checkpoint : "models/parted_vae/parted_vae_45000.pth"
+  vae_checkpoint : "models/parted_vae/parted_vae_40000.pth"
   buffer_size : 3000_00
   agent : 'sac'
   agent_checkpoint : "models/sac_agent/SAC_discrete.tar"
+  num_goals : 2
 
 Network:
-  lr : 0.001
+  lr : 0.0001
   batch_size: 1000
-  hidden_layers : [256, 256, 512, 512, 512]
-  epoch : 80000
+  hidden_layers : [512, 512]
+  epoch : 1000
   max_gradient : 10
   checkpoint_interval : 200
+  feature_dim : 128

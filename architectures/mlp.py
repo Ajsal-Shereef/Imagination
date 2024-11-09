@@ -139,7 +139,7 @@ class Linear(nn.Module):
 
         self.linear_layer = nn.Linear(in_dim, out_dim)
         self.batch_norm = nn.BatchNorm1d(out_dim)
-        # nn.init.xavier_uniform_(self.linear_layer.weight)
+        nn.init.xavier_uniform_(self.linear_layer.weight)
         self.dropout_layer = nn.Dropout(dropout_prob)
         self.post_activation = post_activation
 

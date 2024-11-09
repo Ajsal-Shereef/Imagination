@@ -17,9 +17,9 @@ Training:
   lr_model : 5e-4
   z_capacity : [0., 7.0, 100000, 15]
   u_capacity : [0., 7.0, 100000, 15]
-  g_c : 15.
-  g_h : 30.
-  g_bc : 30.
+  g_c : 15
+  g_h : 30
+  g_bc : 30
   bc_threshold : 0.15
   latent_spec : {
                   'z': 6,

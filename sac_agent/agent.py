@@ -56,8 +56,8 @@ class SAC(nn.Module):
         
         # Critic Network (w/ Target Network)
 
-        self.critic1 = Critic(state_size, action_size, hidden_size, 2).to(device)
-        self.critic2 = Critic(state_size, action_size, hidden_size, 1).to(device)
+        self.critic1 = Critic(state_size, action_size, hidden_size).to(device)
+        self.critic2 = Critic(state_size, action_size, hidden_size).to(device)
         
         assert self.critic1.parameters() != self.critic2.parameters()
         
