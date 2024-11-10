@@ -34,26 +34,27 @@ def main(args: DictConfig) -> None:
     warm_up_loader = DataLoader(dataloader, batch_size=100, shuffle=True)
 
     disc_priors = [[1/args.General.num_goals]*args.General.num_goals]
-    latent_spec = args.Training.latent_spec
-    z_capacity = args.Training.z_capacity
-    u_capacity = args.Training.u_capacity
-    g_c = args.Training.g_c
-    g_h = args.Training.g_h
-    g_bc = args.Training.g_bc
-    bc_threshold = args.Training.bc_threshold
-    recon_type = args.Training.recon_loss
-    epochs = args.Training.epochs
+    latent_spec = args.P_VAE_Network.latent_spec
+    z_capacity = args.P_VAE_Network.z_capacity
+    u_capacity = args.P_VAE_Network.u_capacity
+    g_c = args.P_VAE_Network.g_c
+    g_h = args.P_VAE_Network.g_h
+    g_bc = args.P_VAE_Network.g_bc
+    bc_threshold = args.P_VAE_Network.bc_threshold
+    recon_type = args.P_VAE_Network.recon_loss
+    epochs = args.P_VAE_Network.epochs
     
     save_dir = f'{args.General.load_model_path}/parted_vae'
     os.makedirs(save_dir, exist_ok=True)
     
-    model = VAE(args.Training.input_dim, 
-                args.Training.encoder_hidden_dim, 
-                args.Training.decoder_hidden_dim, 
-                args.Training.output_size, 
+    model = VAE(args.P_VAE_Network.input_dim, 
+                args.P_VAE_Network.encoder_hidden_dim, 
+                args.P_VAE_Network.decoder_hidden_dim, 
+                args.P_VAE_Network.output_size, 
                 latent_spec, 
                 c_priors=disc_priors,
                 save_dir = save_dir,
+                args.Imagination_Network,
                 device=device)
     
     wandb.watch(model)

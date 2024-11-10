@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from collections import OrderedDict
 from torch import nn
 from architectures.mlp import MLP, Linear
-
+from imagination.imagination_net import ImaginationNet
 
 EPS = 1e-12
 
@@ -46,7 +46,8 @@ class PartialLogSoftmax:
 
 
 class VAE(nn.Module):
-    def __init__(self, input_dim, encoder_hidden_dim, decoder_hidden_dim, output_size, latent_spec, c_priors, save_dir, device, temperature=0.67):
+    def __init__(self, input_dim, encoder_hidden_dim, decoder_hidden_dim, output_size, latent_spec, c_priors, save_dir, imagination_net_config, 
+                 device, temperature=0.67):
         super(VAE, self).__init__()
         self.device = device
         self.save_dir = save_dir
@@ -86,6 +87,8 @@ class VAE(nn.Module):
                            hidden_sizes = self.hidden_dim,
                            output_activation = F.relu,
                            dropout_prob = 0.0)
+        
+        self.imagination_net = ImaginationNet()
 
         # Latent Space
         # FC: Fully Connected, PC: Partially Connected

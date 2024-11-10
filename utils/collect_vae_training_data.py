@@ -220,11 +220,11 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
         prob = calculate_probabilities(env.agent_pos, 
                                        env.get_unprocesed_obs()['image'], 
                                        env.get_unprocesed_obs()['direction'], 
-                                       env.red_ball_loc, 
-                                       env.green_ball_loc)
+                                       (2,4), 
+                                       (4,2))
         class_prob.append(prob)
-        caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
-        captions.append(caption_encoding)
+        # caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
+        # captions.append(caption_encoding)
         #caption = state_captioner.generate_caption(state)
         # state = preprocess_observation(state)
         data.append(state)
@@ -245,15 +245,15 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             # cv2.imwrite("frame.png", frame)
             
             prob = calculate_probabilities(env.agent_pos, 
-                                           env.get_unprocesed_obs()['image'], 
-                                           env.get_unprocesed_obs()['direction'], 
-                                           env.red_ball_loc, 
-                                           env.green_ball_loc)
+                                       env.get_unprocesed_obs()['image'], 
+                                       env.get_unprocesed_obs()['direction'], 
+                                       (2,4), 
+                                       (4,2))
             class_prob.append(prob)
             done = terminated + truncated
             obj, caption = generate_caption(env.get_unprocesed_obs()['image'])
-            caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
-            captions.append(caption_encoding)
+            # caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
+            # captions.append(caption_encoding)
             # next_state = preprocess_observation(next_state)
             # Store the transition
             data.append(next_state)
@@ -316,7 +316,7 @@ def main():
     data_path = os.path.join(data_dir, 'class_prob.pkl')
     with open(data_path, 'wb') as f:
         pickle.dump(class_prob, f)
-    print(f"Collected {len(captions)} class prob and saved to {data_path}")
+    print(f"Collected {len(class_prob)} class prob and saved to {data_path}")
 # =============================
 # 6. Entry Point
 # =============================

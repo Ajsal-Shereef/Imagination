@@ -118,13 +118,13 @@ def main(args: DictConfig) -> None:
     #     params.requires_grad = False
     
     #Loading Parted VAE
-    latent_spec = args.Training.latent_spec
+    latent_spec = args.Imagination_Network.latent_spec
     disc_priors = [[1/args.General.num_goals]*args.General.num_goals]
     
-    vae = VAE(args.Training.input_dim, 
-              args.Training.encoder_hidden_dim, 
-              args.Training.decoder_hidden_dim, 
-              args.Training.output_size, 
+    vae = VAE(args.Imagination_Network.input_dim, 
+              args.Imagination_Network.encoder_hidden_dim, 
+              args.Imagination_Network.decoder_hidden_dim, 
+              args.Imagination_Network.output_size, 
               latent_spec, 
               c_priors=disc_priors, 
               save_dir='',

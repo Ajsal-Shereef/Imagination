@@ -23,21 +23,25 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
     if len(all_z) == 0:
         all_z = []
         all_labels = []
+        true_labels = []
         with torch.no_grad():
-            for data, label in tqdm(dataloader, desc="Collecting Latent Vectors"):
+            for data, true_label in tqdm(dataloader, desc="Collecting Latent Vectors"):
                 # sentences = list(sentences)
                 data = data.float().to(device)
+                true_labels.append(true_label.detach().cpu().numpy())
                 # Forward pass
                 reconstruction, inference_out = model(data)
                 labels = torch.exp(inference_out['log_c'])
                 latent = inference_out['u'][0]
-                all_z.append(latent.cpu().numpy())
-                all_labels.append(labels.cpu().numpy())
+                all_z.append(latent.detach().cpu().numpy())
+                all_labels.append(labels.detach().cpu().numpy())
                 # Optionally, collect labels or other metadata if available
         all_z = np.concatenate(all_z, axis=0)  # [num_samples, latent_dim]
         all_labels = np.concatenate(all_labels, axis=0)
+        true_labels = np.concatenate(true_labels, axis=0)
         
     fig_save_name = f'{save_path}/latent_space_.png'
+    true_fig_save_name = f'{save_path}/latent_space_true_label.png'
 
     plt.scatter(all_z[:,0], all_z[:,1], c=all_labels[:,1], cmap='coolwarm', edgecolor='k', alpha=0.7)
     plt.colorbar(label='Probability of Class 1')
@@ -45,6 +49,14 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
     plt.ylabel("Y-axis")
     plt.title("Class latent")
     plt.savefig(fig_save_name)
+    plt.close()
+    
+    plt.scatter(all_z[:,0], all_z[:,1], c=true_labels[:,1], cmap='coolwarm', edgecolor='k', alpha=0.7)
+    plt.colorbar(label='True probability of Class 1')
+    plt.xlabel("X-axis")
+    plt.ylabel("Y-axis")
+    plt.title("Class latent")
+    plt.savefig(true_fig_save_name)
     plt.close()
     
     
@@ -97,12 +109,12 @@ def main(args: DictConfig) -> None:
                 c_priors=disc_priors, 
                 save_dir=save_dir,
                 device=device)
-    model.load("models/parted_vae/parted_vae_55000.pth")
+    model.load("models/parted_vae/parted_vae_15000.pth")
     model.to(device)
     model.eval()
     
     # Visualization of the latent space 
-    data_dir = f'visualizations/{args.General.env}/Feature_based'
+    data_dir = f'visualizations/Parted_vae'
     os.makedirs(data_dir, exist_ok=True)
     latent, labels = visualize_latent_space(model, train_loader, device, method='pca', save_path=data_dir)
     # latent = visualize_latent_space(model, dataloader, device, latent, labels, method='tsne', save_path=data_dir)

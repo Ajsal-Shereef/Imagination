@@ -25,39 +25,48 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
         all_z = []
         all_labels = []
         with torch.no_grad():
-            for data in tqdm(dataloader, desc="Collecting Latent Vectors"):
+            for data, indices in tqdm(dataloader, desc="Collecting Latent Vectors"):
                 # sentences = list(sentences)
                 data = data.float().to(device)
                 # Forward pass
-                inference_out, reconstruction = model(data)
-                labels = torch.argmax(inference_out['prob_cat'], dim=-1)
+                reconstruction, inference_out = model(data)
+                # labels = torch.argmax(inference_out['prob_cat'], dim=-1)
+                labels = inference_out['prob_cat']
                 all_z.append(inference_out['latent'].cpu().numpy())
                 all_labels.append(labels.cpu().numpy())
                 # Optionally, collect labels or other metadata if available
         all_z = np.concatenate(all_z, axis=0)  # [num_samples, latent_dim]
         all_labels = np.concatenate(all_labels, axis=0)
     if method == 'pca':
-        reducer = PCA(n_components=3)
+        reducer = PCA(n_components=2)
         reduced_z = reducer.fit_transform(all_z)
         fig_save_name = f'{save_path}/latent_space_pca_{checkpoint}.png'
     elif method == 'tsne':
-        reducer = TSNE(n_components=3, verbose=1, perplexity=40, n_iter=300)
+        reducer = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
         reduced_z = reducer.fit_transform(all_z)
         fig_save_name = f'{save_path}/latent_space_tsne_{checkpoint}.png'
     else:
         raise ValueError("Method must be 'pca' or 'tsne'.")
     
-    fig = plt.figure(figsize=(16,10))
-    ax = plt.axes(projection='3d')
-    ax.scatter3D(reduced_z[:,0], reduced_z[:,1], reduced_z[:,2], c=all_labels, cmap='tab10')
-    ax.set_title(f'Latent Space Visualization using {method.upper()}')
-    ax.set_xlabel('Component 1')
-    ax.set_ylabel('Component 2')
-    ax.set_zlabel('Component 3')
-    ax.grid(True)
-    ax.legend()
-    fig.savefig(fig_save_name)
-    plt.close(fig)
+    # fig = plt.figure(figsize=(16,10))
+    # ax = plt.axes(projection='3d')
+    # ax.scatter3D(reduced_z[:,0], reduced_z[:,1], reduced_z[:,2], c=all_labels, cmap='tab10')
+    # ax.set_title(f'Latent Space Visualization using {method.upper()}')
+    # ax.set_xlabel('Component 1')
+    # ax.set_ylabel('Component 2')
+    # ax.set_zlabel('Component 3')
+    # ax.grid(True)
+    # ax.legend()
+    # fig.savefig(fig_save_name)
+    # plt.close(fig)
+    
+    plt.scatter(all_z[:,0], all_z[:,1], c=all_labels[:,1], cmap='coolwarm', edgecolor='k', alpha=0.7)
+    plt.colorbar(label='Probability of Class 1')
+    plt.xlabel("X-axis")
+    plt.ylabel("Y-axis")
+    plt.title("Class latent")
+    plt.savefig(fig_save_name)
+    plt.close()
     
     print(f"Latent space visualization saved to {fig_save_name}")
     return all_z, all_labels

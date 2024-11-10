@@ -3,6 +3,7 @@ import hydra
 import wandb
 import torch
 import warnings
+import itertools
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
@@ -12,15 +13,18 @@ import torch.optim as optim
 from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
 from utils.get_llm_output import GetLLMGoals
+from sklearn.model_selection import train_test_split
 from sentence_transformers import SentenceTransformer
+
 
 warnings.filterwarnings('ignore')
 # =============================
 # 1. Training Function
 # =============================
 
-def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
-    epochs=10, kl_annealing=True, anneal_start=1, anneal_end=10, checkpoint_interval=200):
+def train_vae(model, train_loader, labelled_loader, optimizer_labelled, optimizer_model, \
+              device, checkpoint_dir, \
+              epochs=10, kl_annealing=True, anneal_start=1, anneal_end=10, checkpoint_interval=200):
     """
     Train the VAE model.
 
@@ -39,8 +43,8 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         total_loss = 0
         total_recon = 0
         total_kl = 0
-        total_caption = 0
-        pbar = tqdm(dataloader, desc=f"Epoch {epoch}/{epochs}")
+        classification_loss = 0
+        pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{epochs}")
         
         # Determine KL weight
         if kl_annealing:
@@ -53,35 +57,46 @@ def train_vae(model, dataloader, optimizer, device, checkpoint_dir, \
         else:
             kl_weight = 1.0
 
-        for data, caption in pbar:
+        for data, _ in pbar:
             data = data.float().to(device)
-            optimizer.zero_grad()
+            optimizer_model.zero_grad()
             # Forward pass
-            inference_out, reconstruction = model(data)
-            
+            reconstruction, inference_out = model(data)
             # Compute loss
-            loss, recon_loss, kl = model.loss_function(data, caption, inference_out, reconstruction, kl_weight)
+            loss, recon_loss, kl = model.loss_function(data, inference_out, reconstruction, kl_weight)
             # Backward pass and optimization
             loss.backward()
-            optimizer.step()
+            torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=10.0)
+            optimizer_model.step()
             # Accumulate losses
             total_loss += loss.item()
             total_recon += recon_loss.item()
             total_kl += kl.item()
             # total_caption += caption_loss.item()
             pbar.set_postfix({'Loss': loss.item(), 'Recon': recon_loss.item(), 'KL': kl.item(), 'KL Weight': kl_weight})
-        
+            
+        #Supervised loss
+        for data, label in labelled_loader:
+            data = data.float().to(device)
+            label = label.float().to(device)
+            optimizer_labelled.zero_grad()
+            supervised_loss = model.supervised_loss(data, label)
+            supervised_loss.backward()
+            torch.nn.utils.clip_grad_value_(model.parameters(), clip_value=10.0)
+            optimizer_labelled.step()
+            classification_loss += supervised_loss.item()
         # Scheduler step
         # scheduler.step(total_loss)
 
-        average_loss = total_loss / len(dataloader)
-        average_recon = total_recon / len(dataloader)
-        average_kl = total_kl / len(dataloader)
+        average_loss = total_loss / len(train_loader)
+        average_recon = total_recon / len(train_loader)
+        average_kl = total_kl / len(train_loader)
         # average_caption_loss = total_caption / len(dataloader)
         # current_lr = scheduler.get_last_lr()[0]
         wandb.log({"Total loss" : average_loss,
                    "Reconstruction loss" : average_recon,
                    "KL divergence" : average_kl,
+                   "Classification loss" : classification_loss,
                    "KL weight" : kl_weight}, step = epoch)
         # Save checkpoint at specified intervals
         if epoch % checkpoint_interval == 0 or epoch == epochs:
@@ -99,41 +114,43 @@ def main(args: DictConfig) -> None:
     # Log the configuration
     wandb.config.update(OmegaConf.to_container(args, resolve=True))
     
-    #Loading the dataset
-    dataset = get_data(f'{args.General.datapath}/{args.General.encoder_model}/data.pkl')
-    captions = get_data(f'{args.General.datapath}/{args.General.encoder_model}/captions.pkl')
-    # dataset = normalize_data(dataset)
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
-
+    
+    #Loading the dataset
+    datasets = get_data(f'{args.General.datapath}/{args.General.env}/data.pkl')
+    # captions = get_data(f'{args.General.datapath}/{args.General.env}/captions.pkl')
+    class_probs = get_data(f'{args.General.datapath}/{args.General.env}/class_prob.pkl')
+    
+    dataset, labelled_data, unused_label, labels = train_test_split(datasets, class_probs, test_size=0.03, random_state=42)
+    print("[INFO] Number of labelled data: ", len(labelled_data))
+    
     # Initialize dataset and dataloader
-    data = TwoListDataset(dataset, captions)
-    dataloader = DataLoader(data, batch_size=1000, shuffle=True)
-        
-    # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
-    goal_gen = GetLLMGoals()
-    goals = goal_gen.llmGoals([])
-    # Load the sentecebert model to get the embedding of the goals from the LLM
-    sentencebert = SentenceTransformer(args.General.encoder_model)
-    # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
-    mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
-    # Define prior means (mu_p) for each mixture component
-    latent_dim = sentencebert.get_sentence_embedding_dimension()
-    num_mixtures = len(goals)
+    dataloader = TwoListDataset(dataset, unused_label) #The 
+    train_loader = DataLoader(dataloader, batch_size=1000, shuffle=True)
+    
+    dataloader = TwoListDataset(labelled_data, labels)
+    labelled_loader = DataLoader(dataloader, batch_size=100, shuffle=True)
+
+    num_mixtures = args.General.num_goals
 
     vae = GMVAE(
-        input_dim = dataset[0].shape[0], 
-        encoder_hidden = args.Network.encoder_hidden, #Don't forget to edit the snippet above as well
-        decoder_hidden = args.Network.decoder_hidden, 
-        latent_dim=latent_dim, 
-        num_mixtures=num_mixtures, 
-        mu_p=mu_p
-    )
+                input_dim = dataset[0].shape[0], 
+                encoder_hidden = args.Network.encoder_hidden,
+                encoder_out = args.Network.encoder_out,
+                decoder_hidden = args.Network.decoder_hidden, 
+                latent_dim=args.Network.latent_dim, 
+                num_mixtures=num_mixtures
+                )
     vae.to(device)
-
+    wandb.watch(vae)
     # Define optimizer (only parameters that require gradients)
-    optimizer = optim.Adam(vae.parameters(), lr=args.Network.lr)
+    optimizer_labelled = optim.Adam(itertools.chain(*[
+            vae.encoder.parameters(),
+            vae.inference_model.inference_qyx.parameters()
+        ]), lr=args.Network.lr)
+    optimizer_model = optim.Adam(vae.parameters(), lr=args.Network.lr)
     
     # Learning rate scheduler
     # scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.1, patience=5)
@@ -144,9 +161,9 @@ def main(args: DictConfig) -> None:
     anneal_start = args.Network.epoch/args.Network.epoch
     anneal_end = args.Network.epoch
     # Create data directory if it doesn't exist
-    data_dir = f'models/{args.General.encoder_model}/Feature_based'
+    data_dir = f'models/gmvae'
     os.makedirs(data_dir, exist_ok=True)
-    train_vae(vae, dataloader, optimizer, device, data_dir, epochs, kl_annealing, anneal_start, anneal_end)
+    train_vae(vae, train_loader, labelled_loader, optimizer_labelled, optimizer_model, device, data_dir, epochs, kl_annealing, anneal_start, anneal_end)
 
     # Save the trained model
     #save_path = f"{data_dir}/vae_sentence_bert_mog.pth"

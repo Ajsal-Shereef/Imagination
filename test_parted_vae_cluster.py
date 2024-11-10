@@ -7,7 +7,7 @@ from partedvae.models import VAE
 from env.env import SimplePickup, generate_caption, calculate_probabilities
 from omegaconf import DictConfig, OmegaConf
 
-vae_path = "models/parted_vae/parted_vae_37100.pth"
+vae_path = "models/parted_vae/parted_vae_15000.pth"
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 warnings.filterwarnings('ignore')
@@ -29,7 +29,7 @@ def main(args: DictConfig) -> None:
                 save_dir=save_dir,
                 device=device)
     
-    model.load("models/parted_vae/parted_vae_55000.pth")
+    model.load("models/parted_vae/parted_vae_15000.pth")
     model.to(device)
     model.eval()
     total_step = 0
@@ -46,23 +46,18 @@ def main(args: DictConfig) -> None:
             frame = env.get_frame()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             if cluster_prob[0][0] > 0.85:
-                prob = calculate_probabilities(env.agent_pos, 
-                                       env.get_unprocesed_obs()['image'], 
-                                       env.get_unprocesed_obs()['direction'], 
-                                       env.red_ball_loc, 
-                                       env.green_ball_loc)
                 print("First gaussian is greater than 85% " + generate_caption(env.get_unprocesed_obs()['image'])[1])
             elif cluster_prob[0][1] > 0.85:
-                prob = calculate_probabilities(env.agent_pos, 
-                                       env.get_unprocesed_obs()['image'], 
-                                       env.get_unprocesed_obs()['direction'], 
-                                       env.red_ball_loc, 
-                                       env.green_ball_loc)
                 print("Second gaussian is greater than 85% " + generate_caption(env.get_unprocesed_obs()['image'])[1])
             elif cluster_prob[0][1] > 0.40 and cluster_prob[0][1] < 0.60:
                 print("Second gaussian is between 40 and 60 " + generate_caption(env.get_unprocesed_obs()['image'])[1])
             elif cluster_prob[0][0] > 0.40 and cluster_prob[0][0] < 0.60:
                 print("First gaussian is between 40 and 60 " + generate_caption(env.get_unprocesed_obs()['image'])[1])
+            prob = calculate_probabilities(env.agent_pos, 
+                                       env.get_unprocesed_obs()['image'], 
+                                       env.get_unprocesed_obs()['direction'], 
+                                       (2,4), 
+                                       (4,2))
             done = terminated + truncated
             state = next_state
             if done:

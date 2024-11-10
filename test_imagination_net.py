@@ -95,7 +95,7 @@ def main(args: DictConfig) -> None:
                                      vae = vae,
                                      agent = agent).to(device)
         
-    imagination_net.load("models/imagination_net/imagination_net_epoch_1000.tar")
+    imagination_net.load("models/imagination_net/imagination_net_epoch_200.tar")
     imagination_net.eval()
         
     # Create data directory if it doesn't exist
@@ -125,13 +125,13 @@ def main(args: DictConfig) -> None:
                 # difference1 = np.argmax(np.abs(imagined_state[1] - state))
                 # diff_value0 = imagined_state[0][np.argmax(np.abs(imagined_state[0] - state))]
                 # diff_value1 = imagined_state[1][np.argmax(np.abs(imagined_state[1] - state))]
-                action = agent.get_action(imagined_state[0])
                 _, imagined_inference_out0 = vae(imagined_state[:,0,:])
                 imagined_class_prob0 = torch.exp(imagined_inference_out0['log_c'])
                 _, imagined_inference_out1 = vae(imagined_state[:,1,:])
                 imagined_class_prob1 = torch.exp(imagined_inference_out1['log_c'])
                 imagined_state = imagined_state.squeeze(0).detach().cpu().numpy()
                 caption = generate_caption(np.round(imagined_state[0][:-4].reshape((5,5,3))))
+                action = agent.get_action(imagined_state[0])
             next_state, reward, terminated, truncated, _ = env.step(action)
             frame = env.get_frame()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

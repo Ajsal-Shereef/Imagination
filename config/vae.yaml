@@ -3,10 +3,13 @@ General:
   use_logger : true
   encoder_model : "all-MiniLM-L12-v2"
   datapath : "data"
-Network:
-  lr : 0.001
+  num_goals : 2
+VAE_Network:
+  lr : 0.0001
   batch_size: 1000
-  encoder_hidden : [1024,1024,512,512,512,256,256,256,256]
-  decoder_hidden : [256,256,256,256,512,512]
-  epoch : 1000
+  encoder_hidden : [128,256,64]
+  encoder_out : 32
+  latent_dim : 12
+  decoder_hidden : [256]
+  epoch : 80000
   max_gradient : 10

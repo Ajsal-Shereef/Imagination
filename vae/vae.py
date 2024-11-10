@@ -21,6 +21,7 @@ class InferenceNet(nn.Module):
     This class implements the inference part of the GMVAE.
     """
     super(InferenceNet, self).__init__()
+    self.num_mixtures = y_dim
 
     # q(y|x)
     self.inference_qyx = torch.nn.ModuleList([
@@ -58,7 +59,7 @@ class InferenceNet(nn.Module):
       concat = layer(concat)
     return concat
   
-  def forward(self, x, num_mixture, temperature=1, hard=0):
+  def forward(self, x, temperature=1, hard=0):
     #x = Flatten(x)
 
     # q(y|x)
@@ -66,11 +67,11 @@ class InferenceNet(nn.Module):
     #Invoking the q(z|x,y)
     mu, logvar, z = self.qzxy(x, y)
     
-    y_ = torch.zeros([x.shape[0], num_mixture]).to(device)
+    y_ = torch.zeros([x.shape[0], self.num_mixtures]).to(device)
     # q(z|x,y)
-    zm, zv = [[None] * num_mixture for i in range(2)]
-    for i in range(num_mixture):
-        y_c = y_ + torch.eye(num_mixture).to(device)[i]
+    zm, zv = [[None] * self.num_mixtures for i in range(2)]
+    for i in range(self.num_mixtures):
+        y_c = y_ + torch.eye(self.num_mixtures).to(device)[i]
         mu, logvar, _ = self.qzxy(x, y_c)
         zm[i] = mu
         zv[i] = logvar
@@ -84,7 +85,7 @@ class InferenceNet(nn.Module):
 # =============================
 
 class GMVAE(nn.Module):
-    def __init__(self, input_dim, encoder_hidden, decoder_hidden, latent_dim=128, num_mixtures=5, mu_p=None):
+    def __init__(self, input_dim, encoder_hidden, encoder_out, decoder_hidden, latent_dim=128, num_mixtures=2):
         """
         Variational Autoencoder with a mixture of Gaussians in the latent space, and a decoder to reconstruct the data.
 
@@ -104,30 +105,27 @@ class GMVAE(nn.Module):
         
         #Encoder model
         # Define the encoder model with multiple layers
-        self.encoder = MLP(input_dim, latent_dim, encoder_hidden)
+        self.encoder = MLP(input_dim, encoder_out, encoder_hidden)
         
         #Inference net of the GMVAE
-        self.inference_model = InferenceNet(latent_dim, latent_dim, self.num_mixtures)
+        self.inference_model = InferenceNet(encoder_out, latent_dim, self.num_mixtures)
         
         #Generative net of the VAE
         self.generative_model = MLP(latent_dim, input_dim, decoder_hidden)
         
         # Apply Xavier initialization to both models
-        # self.encoder.apply(self.init_weights)
-        # self.decoder.apply(self.init_weights)
-        # self.fc_mu.apply(self.init_weights)
-        # self.fc_logvar.apply(self.init_weights)
-        # self.fc_weights.apply(self.init_weights)
+        self.encoder.apply(self.init_weights)
+        self.generative_model.apply(self.init_weights)
+        self.inference_model.apply(self.init_weights)
 
         # Prior means (mu_p). If not provided, defaults to zero vectors
-        mu_p.shape == (self.num_mixtures, latent_dim), \
-                f"mu_p must have shape ({self.num_mixtures}, {latent_dim}), but got {mu_p.shape}"
+        self.prior_mu = nn.Parameter(torch.randn(num_mixtures, latent_dim))
+        self.prior_logvar = nn.Parameter(torch.zeros(num_mixtures, latent_dim))
                 
-        self.register_buffer('mu_p_buffer', mu_p)  # Register as buffer to move with device
-        
-        #This is the prior weight of the gaussin, we weight each gaussian equally
+
+        #This is the prior weight of the gaussian.
         # self.prior_c = torch.full((self.num_mixtures,), 1.0 / self.num_mixtures).to(device)
-        self.prior_c = nn.Parameter(torch.zeros(self.num_mixtures))
+        self.prior_c = nn.Parameter(torch.ones(self.num_mixtures))
             
     # Function to apply Xavier normal initialization
     def init_weights(self, m):
@@ -179,7 +177,7 @@ class GMVAE(nn.Module):
         reconstructed_data = self.generative_model(inference_net_out['latent'])
         return reconstructed_data, inference_net_out
     
-    def kl_divergence_loss(self, inference_out, captions):
+    def kl_divergence_loss(self, inference_out):
         """
         Compute the KL divergence between the approximate posterior and the prior.
 
@@ -188,17 +186,13 @@ class GMVAE(nn.Module):
         Returns:
             kl (torch.Tensor): KL divergence for each sample. Shape: [batch_size]
         """
-        if hasattr(self, 'mu_p'):
-            mu_p = self.mu_p  # [num_mixtures, latent_dim]
-            mu_p = mu_p.unsqueeze(0)  # [1, num_mixtures, latent_dim]
-        else:
-            mu_p = self.mu_p_buffer.unsqueeze(0)
         # Compute KL divergence for each component and each latent dimension
         kl_divergence = [[0] for i in range(self.num_mixtures)]
         for i in range(self.num_mixtures):
             #KL divergence between two gaussian is given by below formula. The second gaussian variance is identity matrix
             # KL(N(mu_i, sigma_i^2) || N(mu_p_i, I)) = 0.5 * (sigma_i^2 + (mu_p_i - mu_i)^2 - 1 - log(sigma_i^2))
-            kl = 0.5 * (torch.exp(inference_out['logvar'][:,i,:]) + (inference_out['mean'][:,i,:] - mu_p[:,i,:])**2 - 1 - inference_out['logvar'][:,i,:])  # [batch, num_mixtures, latent_dim]
+            kl = 0.5 * (self.prior_logvar[i,:].unsqueeze(0) - inference_out['logvar'][:,i,:] + (torch.exp(inference_out['logvar'][:,i,:]) + (inference_out['mean'][:,i,:] - self.prior_mu[i,:].unsqueeze(0)).pow(2)) / torch.exp(self.prior_logvar[i,:]) - 1)
+            # kl = 0.5 * (torch.exp(inference_out['logvar'][:,i,:]) + (inference_out['mean'][:,i,:] - self.prior_mu[:,i,:])**2 - 1 - inference_out['logvar'][:,i,:])  # [batch, num_mixtures, latent_dim]
             kl = kl.sum(dim=-1)  # Sum over latent dimensions: [batch, num_mixtures]
             kl_divergence[i] = kl
         #The full KL divergence of gaussian mixture model contain two parts
@@ -239,8 +233,16 @@ class GMVAE(nn.Module):
     #     kl_div = torch.sum(kl_div, dim=-1)
     #     # caption_loss = F.kl_div(class_prob, normalised_cosine_sim, reduction = 'none')
     #     return torch.sum(kl_div)
-
-    def loss_function(self, data, caption, inference_out, reconstruction, kl_weight):
+    
+    def supervised_loss(self, data, target):
+        features = self.encoder(data)
+        inference_out = self.inference_model(features)
+        input = inference_out['prob_cat']
+        sum_ce = torch.sum(-1 * target * torch.log(input + 1e-10), dim=1)
+        loss = torch.mean(sum_ce)
+        return loss
+        
+    def loss_function(self, data, inference_out, reconstruction, kl_weight):
         """
         Compute the VAE loss function.
 
@@ -259,10 +261,7 @@ class GMVAE(nn.Module):
         recon_loss = F.mse_loss(reconstruction, data, reduction='sum')
 
         # KL divergence loss
-        kl = torch.sum(self.kl_divergence_loss(inference_out, caption))
-        
-        #Caption loss
-        # caption_loss = self.caption_loss(inference_out, caption)
+        kl = torch.sum(self.kl_divergence_loss(inference_out))
 
         # Total loss with annealed KL weight
         loss = recon_loss + kl_weight * kl
@@ -285,6 +284,6 @@ class GMVAE(nn.Module):
         Args:
             path (str): File path from which to load the model.
         """
-        self.load_state_dict(torch.load(path, map_location=self.mu_p_buffer.device))
+        self.load_state_dict(torch.load(path, map_location=device))
         self.eval()
         print(f"[INFO] VAE Model loaded from {path}")

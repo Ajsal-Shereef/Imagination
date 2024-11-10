@@ -74,22 +74,22 @@ class ImaginationNet(nn.Module):
         agent_action = self.agent.get_action(state).to(state.device)  # Get agent's action for original state
         agent_action_one_hot = F.one_hot(agent_action, num_classes=self.env.action_space.n).float()
 
-        # Class probabilities from the VAE for the original state
-        state_class_prob = torch.exp(state_inference_out['log_c'])
+        # # Class probabilities from the VAE for the original state
+        # state_class_prob = torch.exp(state_inference_out['log_c'])
 
-        # Prepare targets for the two classes (target distributions)
-        max_indices = state_class_prob.argmax(dim=1)
-        target1 = torch.zeros_like(state_class_prob)
-        target2 = torch.zeros_like(state_class_prob)
+        # # Prepare targets for the two classes (target distributions)
+        # max_indices = state_class_prob.argmax(dim=1)
+        # target1 = torch.zeros_like(state_class_prob)
+        # target2 = torch.zeros_like(state_class_prob)
 
-        # Assign probabilities based on max indices
-        target1[max_indices == 0] = state_class_prob[max_indices == 0]
-        target2[max_indices == 0] = 1 - state_class_prob[max_indices == 0]
-        target2[max_indices == 1] = state_class_prob[max_indices == 1]
-        target1[max_indices == 1] = 1 - state_class_prob[max_indices == 1]
+        # # Assign probabilities based on max indices
+        # target1[max_indices == 0] = state_class_prob[max_indices == 0]
+        # target2[max_indices == 0] = 1 - state_class_prob[max_indices == 0]
+        # target2[max_indices == 1] = state_class_prob[max_indices == 1]
+        # target1[max_indices == 1] = 1 - state_class_prob[max_indices == 1]
 
-        # Stack targets for each imagined state
-        target_distributions = torch.stack((target1, target2), dim=0)
+        # # Stack targets for each imagined state
+        # target_distributions = torch.stack((target1, target2), dim=0)
 
         # Loss for each imagined state
         for i in range(self.num_goals):
@@ -99,7 +99,10 @@ class ImaginationNet(nn.Module):
             # with torch.no_grad():
             _, imagined_inference_out = self.vae(imagined_state)
             imagined_class_prob = torch.exp(imagined_inference_out['log_c'])
-            cl_loss = F.cross_entropy(imagined_class_prob.log(), target_distributions[i])
+            target = torch.zeros_like(imagined_class_prob)
+            target[:,i] = 1
+            # cl_loss = F.cross_entropy(imagined_class_prob.log(), target_distributions[i])
+            cl_loss = F.cross_entropy(imagined_class_prob.log(), target)
 
             # 2. Proximity loss between imagined state and original state
             prox_loss = F.mse_loss(imagined_state, state)
@@ -111,7 +114,7 @@ class ImaginationNet(nn.Module):
             action_loss = F.mse_loss(imagined_action_one_hot, agent_action_one_hot)
 
             # Aggregate losses
-            total_loss += 1.00*cl_loss + 1.00 * prox_loss + 1.00 * action_loss
+            total_loss += 1.00*cl_loss + 0.50 * prox_loss + 0.50 * action_loss
             class_loss += cl_loss
             policy_loss += action_loss
             proximity_loss += prox_loss
