@@ -1,4 +1,4 @@
-General:
+VAE_General:
   env : "SimplePickup"
   use_logger : true
   encoder_model : "all-MiniLM-L12-v2"

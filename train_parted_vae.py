@@ -5,6 +5,8 @@ import torch
 import itertools
 from torch import optim
 from utils.utils import *
+from dqn.dqn import DQNAgent
+from sac_agent.agent import SAC
 from partedvae.models import VAE
 from partedvae.training import Trainer
 from torch.utils.data import DataLoader
@@ -14,14 +16,19 @@ from sklearn.model_selection import train_test_split
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
-@hydra.main(version_base=None, config_path="config", config_name="parted_vae")
+@hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     # Log the configuration
-    wandb.config.update(OmegaConf.to_container(args, resolve=True))
+    # wandb.config.update(OmegaConf.to_container(args, resolve=True))
+    
+    if args.General.env ==  "SimplePickup":
+        from env.env import SimplePickup
+        env = SimplePickup(max_steps=args.General.max_ep_len, agent_view_size=5, size=7)
+    
     #Loading the dataset
-    datasets = get_data(f'{args.General.datapath}/{args.General.env}/data.pkl')
-    captions = get_data(f'{args.General.datapath}/{args.General.env}/captions.pkl')
-    class_probs = get_data(f'{args.General.datapath}/{args.General.env}/class_prob.pkl')
+    datasets = get_data(f'{args.P_VAE_General.datapath}/{args.P_VAE_General.env}/data.pkl')
+    # captions = get_data(f'{args.P_VAE_General.datapath}/{args.P_VAE_General.env}/captions.pkl')
+    class_probs = get_data(f'{args.P_VAE_General.datapath}/{args.P_VAE_General.env}/class_prob.pkl')
     
     dataset, labelled_data, unused_label, labels = train_test_split(datasets, class_probs, test_size=0.023, random_state=42)
     print("[INFO] Number of labelled data: ", len(labelled_data))
@@ -33,7 +40,7 @@ def main(args: DictConfig) -> None:
     dataloader = TwoListDataset(labelled_data, labels)
     warm_up_loader = DataLoader(dataloader, batch_size=100, shuffle=True)
 
-    disc_priors = [[1/args.General.num_goals]*args.General.num_goals]
+    disc_priors = [[1/args.P_VAE_General.num_goals]*args.P_VAE_General.num_goals]
     latent_spec = args.P_VAE_Network.latent_spec
     z_capacity = args.P_VAE_Network.z_capacity
     u_capacity = args.P_VAE_Network.u_capacity
@@ -44,8 +51,26 @@ def main(args: DictConfig) -> None:
     recon_type = args.P_VAE_Network.recon_loss
     epochs = args.P_VAE_Network.epochs
     
-    save_dir = f'{args.General.load_model_path}/parted_vae'
+    save_dir = f'{args.P_VAE_General.load_model_path}/parted_vae'
     os.makedirs(save_dir, exist_ok=True)
+    
+    if args.Imagination_General.agent == 'dqn':
+        agent = DQNAgent(env, 
+                        args.General, 
+                        args.policy_config, 
+                        args.policy_network_cfg, 
+                        args.policy_network_cfg, '')
+    else:
+        agent = SAC(args,
+                    state_size = env.observation_space.shape[0],
+                    action_size = env.action_space.n,
+                    device=device,
+                    buffer_size = args.memory_size)
+    agent.to(device)
+    agent.load_params(args.Imagination_General.agent_checkpoint)
+    #Freezing the SAC agent weight to prevent updating
+    for params in agent.parameters():
+        params.requires_grad = False
     
     model = VAE(args.P_VAE_Network.input_dim, 
                 args.P_VAE_Network.encoder_hidden_dim, 
@@ -54,33 +79,38 @@ def main(args: DictConfig) -> None:
                 latent_spec, 
                 c_priors=disc_priors,
                 save_dir = save_dir,
-                args.Imagination_Network,
+                imagination_net_config = args.Imagination_Network,
+                env = env,
                 device=device)
     
-    wandb.watch(model)
+    # wandb.watch(model)
 
-    if args.General.LOAD_MODEL:
+    if args.P_VAE_General.LOAD_MODEL:
         # Note: When you load a model, capacities are restarted, which isn't intuitive if you are gonna re-train it
         model = model.load(save_dir, device=device)
         model.sigmoid_coef = 8.
  
-    if args.General.TRAIN:
+    if args.P_VAE_General.TRAIN:
         optimizer_warm_up = optim.Adam(itertools.chain(*[
             model.encoder.parameters(),
             model.h_to_c_logit_fc.parameters()
-        ]), lr=args.Training.lr_warm_up)
-        optimizer_model = optim.Adam(model.parameters(), lr=args.Training.lr_model)
-        optimizers = [optimizer_warm_up, optimizer_model]
+        ]), lr=args.P_VAE_Network.lr_warm_up)
+        optimizer_imagination_net = optim.Adam(itertools.chain(*[
+            model.encoder.parameters(),
+            model.imagination_net.parameters()
+        ]), lr=args.P_VAE_Network.lr_warm_up)
+        optimizer_model = optim.Adam(model.parameters(), lr=args.P_VAE_Network.lr_model)
+        optimizers = [optimizer_warm_up, optimizer_imagination_net, optimizer_model]
 
-        trainer = Trainer(model, optimizers, device=device, recon_type=recon_type,
+        trainer = Trainer(model, optimizers, agent=agent, device=device, recon_type=recon_type,
                           z_capacity=z_capacity, u_capacity=u_capacity, c_gamma=g_c, entropy_gamma=g_h,
-                          bc_gamma=g_bc, bc_threshold=bc_threshold, save_freequency = args.Training.save_freequency,
-                          model_save_path = f'{args.General.load_model_path}/parted_vae')
+                          bc_gamma=g_bc, bc_threshold=bc_threshold, save_freequency = args.P_VAE_Network.save_freequency,
+                          model_save_path = f'{args.P_VAE_General.load_model_path}/parted_vae')
         trainer.train(train_loader, warm_up_loader=warm_up_loader, epochs=epochs, run_after_epoch=None,
                       run_after_epoch_args=[])
 
     
 if __name__ == "__main__":
-    wandb.init(project="Imagination-Parted VAE_training")
+    # wandb.init(project="Imagination-Parted VAE_training")
     main()   
     

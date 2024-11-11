@@ -15,7 +15,6 @@ class ImaginationNet(nn.Module):
                  env,
                  config,
                  num_goals,
-                 vae,
                  agent
                 ):
         """
@@ -28,26 +27,23 @@ class ImaginationNet(nn.Module):
         super(ImaginationNet, self).__init__()
         self.env = env
         self.input_dim = env.observation_space.shape[0]
-        hidden_layers = config.Network.hidden_layers
+        hidden_layers = config.hidden_layers
         self.encoder = MLP(input_size = self.input_dim,
-                           output_size = config.Network.feature_dim,
+                           output_size = config.feature_dim,
                            hidden_sizes = hidden_layers,
                            output_activation = F.relu,
                            dropout_prob = 0.0)
-        self.fc1 = Linear(in_dim = config.Network.feature_dim, 
+        self.fc1 = Linear(in_dim = config.feature_dim, 
                           out_dim = self.input_dim)
-        self.fc2 = Linear(in_dim = config.Network.feature_dim, 
+        self.fc2 = Linear(in_dim = config.feature_dim, 
                           out_dim = self.input_dim)
         self.agent = agent
-        self.vae = vae
-        self.agent.eval()
-        self.vae.eval()
         self.num_goals = num_goals
         self.ce_loss = nn.CrossEntropyLoss(reduction='mean')
         self.mse_loss = nn.MSELoss(reduction='mean')
         #Preventing agent to take random action.
-        if config.General.agent == 'dqn':
-            self.agent.set_episode_step()
+        # if config.General.agent == 'dqn':
+        #     self.agent.set_episode_step()
 
     def compute_loss(self, state, imagined_states):
         """

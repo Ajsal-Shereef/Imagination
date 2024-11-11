@@ -71,19 +71,19 @@ def train_imagination_net(config,
     imagination_net.save('models/imagination_net.pth')
     print("Training complete.")
 
-@hydra.main(version_base=None, config_path="config", config_name="imagination_net_master_config")
+@hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     # Log the configuration
-    wandb.config.update(OmegaConf.to_container(args, resolve=True))
+    # wandb.config.update(OmegaConf.to_container(args, resolve=True))
     #Loading the dataset
-    dataset = get_data(f'{args.General.datapath}/{args.General.env}/data.pkl')
+    dataset = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/data.pkl')
     # captions = get_data(f'{args.General.datapath}/{args.General.encoder_model}/captions.pkl')
     # Initialize dataset and dataloader
     dataset = TextDataset(dataset)
-    dataloader = DataLoader(dataset, batch_size=args.Network.batch_size, shuffle=True)
+    dataloader = DataLoader(dataset, batch_size=args.Imagination_Network.batch_size, shuffle=True)
     if args.General.env ==  "SimplePickup":
         from env.env import SimplePickup
-        env = SimplePickup(max_steps=args.General.max_ep_len, agent_view_size=5, size=7)
+        env = SimplePickup(max_steps=args.Imagination_General.max_ep_len, agent_view_size=5, size=7)
     # dataset = normalize_data(dataset)
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -118,37 +118,37 @@ def main(args: DictConfig) -> None:
     #     params.requires_grad = False
     
     #Loading Parted VAE
-    latent_spec = args.Imagination_Network.latent_spec
-    disc_priors = [[1/args.General.num_goals]*args.General.num_goals]
+    latent_spec = args.P_VAE_Network.latent_spec
+    disc_priors = [[1/args.P_VAE_General.num_goals]*args.P_VAE_General.num_goals]
     
-    vae = VAE(args.Imagination_Network.input_dim, 
-              args.Imagination_Network.encoder_hidden_dim, 
-              args.Imagination_Network.decoder_hidden_dim, 
-              args.Imagination_Network.output_size, 
+    vae = VAE(args.P_VAE_Network.input_dim, 
+              args.P_VAE_Network.encoder_hidden_dim, 
+              args.P_VAE_Network.decoder_hidden_dim, 
+              args.P_VAE_Network.output_size, 
               latent_spec, 
               c_priors=disc_priors, 
               save_dir='',
               device=device)
-    vae.load(args.General.vae_checkpoint)
+    vae.load(args.P_VAE_General.vae_checkpoint)
     #Freezing the VAE weight to prevent updating
     for params in vae.parameters():
         params.requires_grad = False
         
     if args.General.agent == 'dqn':
         agent = DQNAgent(env, 
-                        args.General, 
-                        args.policy_config, 
-                        args.policy_network_cfg, 
-                        args.policy_network_cfg, '')
+                         args.General, 
+                         args.policy_config, 
+                         args.policy_network_cfg, 
+                         args.policy_network_cfg, '')
     else:
         agent = SAC(args,
                     state_size = env.observation_space.shape[0],
                     action_size = env.action_space.n,
                     device=device,
-                    buffer_size = args.General.buffer_size)
+                    buffer_size = args.Imagination_General.buffer_size)
     
     #Loading the pretrained weight of sac agent.
-    agent.load_params(args.General.agent_checkpoint)
+    agent.load_params(args.Imagination_General.agent_checkpoint)
     #Freezing the SAC agent weight to prevent updating
     for params in agent.parameters():
         params.requires_grad = False
@@ -165,9 +165,9 @@ def main(args: DictConfig) -> None:
                           dataloader = dataloader, 
                           checkpoint_interval = args.Network.checkpoint_interval, 
                           checkpoint_dir = model_dir,
-                          num_goals = args.General.num_goals)
+                          num_goals = args.Imagination_General.num_goals)
     
 if __name__ == "__main__":
-    wandb.init(project="Imagination-net_training")
+    # wandb.init(project="Imagination-net_training")
     main()
     

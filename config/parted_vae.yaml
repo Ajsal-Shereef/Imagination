@@ -1,4 +1,4 @@
-General:
+P_VAE_General:
   env : "SimplePickup"
   load_model_path : 'models/'
   datapath : "data"
