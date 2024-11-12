@@ -1,6 +1,6 @@
 import numpy as np
 from gymnasium import spaces
-from minigrid.core.constants import COLOR_NAMES, OBJECT_TO_IDX, COLOR_TO_IDX, STATE_TO_IDX, DIR_TO_VEC
+from minigrid.core.constants import COLOR_NAMES, OBJECT_TO_IDX, COLOR_TO_IDX, STATE_TO_IDX, DIR_TO_VEC, IDX_TO_OBJECT, IDX_TO_COLOR
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
 from minigrid.core.world_object import Door, Goal, Key, Wall, Ball
@@ -261,72 +261,153 @@ def reverse_preprocess_observation(processed_obs, height, width):
 # Example grid size could be 7x7 for a partially observable environment
 # processed_obs = preprocess_observation(obs, grid_size=7)
 
-class TransitionCaptioner:
+class MiniGridTransitionDescriber:
     def __init__(self, view_size):
         self.view_size = view_size
-        # Reverse dictionaries for decoding
-        self.idx_to_object = {v: k for k, v in OBJECT_TO_IDX.items()}
-        self.idx_to_color = {v: k for k, v in COLOR_TO_IDX.items()}
-        self.idx_to_state = {v: k for k, v in STATE_TO_IDX.items()}
-        self.directions = {
-            0: "right",
-            1: "down",
-            2: "left",
-            3: "up"
-        }
 
-    def decode_observation(self, obs_image):
-        """Decode an observation from integers to readable names."""
-        decoded = []
-        for i in range(self.view_size):
-            row = []
-            for j in range(self.view_size):
-                obj_idx, color_idx, state_idx = obs_image[i, j]
-                obj = self.idx_to_object.get(obj_idx, "empty")
-                color = self.idx_to_color.get(color_idx, "unknown")
-                state = self.idx_to_state.get(state_idx, "unknown")
-                row.append((obj, color, state))
-            decoded.append(row)
-        return decoded
+    def get_objects_in_view(self, view):
+        """Extract objects from the agent's partial view."""
+        objects_in_view = {}
+        for x in range(self.view_size):
+            for y in range(self.view_size):
+                obj_type, color, state = view[x, y]
+                obj_name = IDX_TO_OBJECT.get(obj_type, None)
+                color_name = IDX_TO_COLOR.get(color, None)
+                if obj_name and obj_name != "empty" and obj_name != "wall" and (x, y) != (2, 4):
+                    objects_in_view[(x, y)] = (color_name, obj_name)
+        return objects_in_view
 
-    def describe_change(self, old, new, direction):
-        """Generate a natural language description of the change between two observations."""
-        changes = []
-        for i in range(self.view_size):
-            for j in range(self.view_size):
-                old_obj, old_color, old_state = old[i][j]
-                new_obj, new_color, new_state = new[i][j]
+    def manhattan_distance(self, pos1, pos2):
+        """Calculate Manhattan distance between two positions."""
+        return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
-                # Skip if object is "wall" or "empty" or if there was no change
-                if old_obj in ["wall", "empty"] and new_obj in ["wall", "empty"]:
-                    continue
-                if (old_obj, old_color, old_state) == (new_obj, new_color, new_state):
-                    continue
+    def calculate_turns_needed(self, agent_pos, obj_pos, agent_dir):
+        """Calculate turns needed for the agent to face an object."""
+        relative_position = (obj_pos[0] - agent_pos[0], obj_pos[1] - agent_pos[1])
+        normalized_arr = relative_position / np.max(np.abs(relative_position))
+        if np.array_equal(normalized_arr, DIR_TO_VEC[agent_dir]):  # Already aligned
+            return 0
+        for turns, direction in enumerate(DIR_TO_VEC, start=1):
+            if np.array_equal(direction, normalized_arr):
+                return min(turns, 5 - turns)  # Min turns in either direction
+        return 2  # Default to two turns if diagonal (e.g., obj is far)
 
-                direction_desc = f"{self.directions[direction]}"
-                
-                # If the object disappeared and isn't "wall" or "empty", assume it was picked up
-                if old_obj != "empty" and new_obj == "empty":
-                    changes.append(f"The agent picked up the {old_color} {old_obj} at position ({i}, {j}), relative to the agent's {direction_desc}.")
-                elif old_obj == "empty" and new_obj != "empty":
-                    changes.append(f"A {new_color} {new_obj} appeared at position ({i}, {j}), relative to the agent's {direction_desc}.")
-                elif old_obj != new_obj:
-                    changes.append(f"The object at position ({i}, {j}), relative to the agent's {direction_desc}, changed from {old_color} {old_obj} to {new_color} {new_obj}.")
-                elif old_state != new_state:
-                    changes.append(f"The {new_color} {new_obj} at position ({i}, {j}), relative to the agent's {direction_desc}, changed its state from {old_state} to {new_state}.")
+    def generate_description(self, agent_prev_pos, agent_curr_pos, agent_prev_dir, agent_curr_dir, 
+                             prev_view, curr_view, red_ball_pos, green_ball_pos, agent_action):
+        """
+        Generate a description of the agent's transition.
+
+        Args:
+        - agent_prev_pos: Tuple (x, y) of the agent's previous position.
+        - agent_curr_pos: Tuple (x, y) of the agent's current position.
+        - agent_prev_dir: Integer representing the agent's previous direction.
+        - agent_curr_dir: Integer representing the agent's current direction.
+        - prev_view: Partial view array (view_size x view_size x 3) for the previous frame.
+        - curr_view: Partial view array (view_size x view_size x 3) for the current frame.
+        - red_ball_pos: Tuple (x, y) of the red ball's position.
+        - green_ball_pos: Tuple (x, y) of the green ball's position.
+        - agent_action: Integer representing the agent's current action.
+
+        Returns:
+        - A string description of the agent's transition.
+        """
+        directions = ["right", "down", "left", "up"]
+
+        # Get objects in view before and after the transition
+        curr_objects = self.get_objects_in_view(curr_view)
+        if agent_prev_pos or agent_prev_dir is None:
+            if curr_objects:
+                words = []
+                for pos, (color_name, obj_name) in curr_objects.items():
+                    obj_words = " ".join([color_name, obj_name])
+                    words.append(obj_words)
+                if len(curr_objects) > 1:
+                    red_dist = self.manhattan_distance(agent_curr_pos, red_ball_pos)
+                    green_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
+                    if red_dist == green_dist:
+                        # Calculate turns needed to face each ball
+                        turns_to_red = self.calculate_turns_needed(agent_curr_pos, red_ball_pos, agent_curr_dir)
+                        turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
+                        if turns_to_red < turns_to_green:
+                            return f"The agent sees {', '.join(words)}. Agent is closer to the red ball."
+                        elif turns_to_green < turns_to_red:
+                            return f"The agent sees {', '.join(words)}. Agent is closer to the green ball."
+                        else:
+                            return f"The agent sees {', '.join(words)}. Agent is equidistant from both balls."
+                    elif red_dist < green_dist:
+                        return f"The agent sees {', '.join(words)}. Agent is closer to the red ball."
+                    else:
+                        return f"The agent sees {', '.join(words)}. Agent is closer to the green ball."
+                else:
+                    return f"The agent sees {', '.join(words)}."
+            else:
+                return "No significant change detected."
+
+        prev_objects = self.get_objects_in_view(prev_view)
         
-        if changes:
-            return " ".join(changes)
-        else:
-            return "No notable changes."
+        # Identify objects that disappeared from view
+        disappeared_objects = [obj for pos, obj in prev_objects.items() if obj not in curr_objects.values()]
 
-    def get_transition_caption(self, old_obs, new_obs):
-        """Generates a caption for the transition between two consecutive observations."""
-        old_image, new_image = old_obs['image'], new_obs['image']
-        old_decoded = self.decode_observation(old_image)
-        new_decoded = self.decode_observation(new_image)
-        direction = new_obs['direction']  # Use the direction from the new observation
-        return self.describe_change(old_decoded, new_decoded, direction)
+        # Identify objects that appeared in view
+        appeared_objects = [obj for pos, obj in curr_objects.items() if obj not in prev_objects.values()]
+        
+        # Identify the common objects in both frames
+        common_objects = [obj for pos, obj in curr_objects.items() if obj in prev_objects.values()]
+
+        # Check movement description based on Manhattan distance for red and green balls if in view
+        movement_desc = ""
+        for obj in common_objects:
+            if obj == ('red', 'ball'):
+                prev_dist = self.manhattan_distance(agent_prev_pos, red_ball_pos)
+                curr_dist = self.manhattan_distance(agent_curr_pos, red_ball_pos)
+            elif obj == ('green', 'ball'):
+                prev_dist = self.manhattan_distance(agent_prev_pos, green_ball_pos)
+                curr_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
+            if curr_dist < prev_dist:
+                movement_desc += f"The agent moved closer to the {obj[0]} {obj[1]}. "
+                    
+        # Describe objects that disappeared from the view
+        disappearance_desc = ""
+        words = []
+        if disappeared_objects:
+            for color_name, obj_name in disappeared_objects:
+                if agent_action == 3:
+                    disappearance_desc += f"The agent picked up the {color_name} {obj_name}. "
+                else:
+                    obj_words = " ".join([color_name, obj_name])
+                    words.append(obj_words)
+            if words:
+                disappearance_desc += f"The agent ignored {', '.join(words)}. "
+                
+        # Describe objects that appeared in the view
+        appearance_desc = ""
+        words = []
+        if appeared_objects:
+            for color_name, obj_name in appeared_objects:
+                obj_words = " ".join([color_name, obj_name])
+                words.append(obj_words)
+            if len(curr_objects) > 1:
+                red_dist = self.manhattan_distance(agent_curr_pos, red_ball_pos)
+                green_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
+                if red_dist < green_dist:
+                    appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is closer to the red ball."
+                elif red_dist > green_dist:
+                    appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is closer to the green ball."
+                else:
+                    turns_to_red = self.calculate_turns_needed(agent_curr_pos, red_ball_pos, agent_curr_dir)
+                    turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
+                    if turns_to_red < turns_to_green:
+                        appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is closer to the red ball."
+                    elif turns_to_green < turns_to_red:
+                        appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is closer to the green ball."
+                    else:
+                        appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is equidistant from both balls."
+            else:
+                appearance_desc += f"The {', '.join(words)} appeared in the current view."
+
+        # Combine all parts into a single description
+        return (movement_desc + appearance_desc + disappearance_desc).strip() if (
+            movement_desc or appearance_desc or disappearance_desc) else "No significant change detected."
 
 
 class DoorKeyPickup(MiniGridEnv):

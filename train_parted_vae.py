@@ -19,7 +19,7 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 @hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     # Log the configuration
-    # wandb.config.update(OmegaConf.to_container(args, resolve=True))
+    wandb.config.update(OmegaConf.to_container(args, resolve=True))
     
     if args.General.env ==  "SimplePickup":
         from env.env import SimplePickup
@@ -83,7 +83,7 @@ def main(args: DictConfig) -> None:
                 env = env,
                 device=device)
     
-    # wandb.watch(model)
+    wandb.watch(model)
 
     if args.P_VAE_General.LOAD_MODEL:
         # Note: When you load a model, capacities are restarted, which isn't intuitive if you are gonna re-train it
@@ -99,7 +99,14 @@ def main(args: DictConfig) -> None:
             model.encoder.parameters(),
             model.imagination_net.parameters()
         ]), lr=args.P_VAE_Network.lr_warm_up)
-        optimizer_model = optim.Adam(model.parameters(), lr=args.P_VAE_Network.lr_model)
+        # Get all model parameters
+        all_params = set(model.parameters())
+        # Get parameters to exclude
+        excluded_params = set(model.imagination_net.parameters())
+        
+        # Define the parameters for the optimizer, excluding the chosen network
+        params_to_optimize = all_params - excluded_params
+        optimizer_model = optim.Adam(params_to_optimize, lr=args.P_VAE_Network.lr_model)
         optimizers = [optimizer_warm_up, optimizer_imagination_net, optimizer_model]
 
         trainer = Trainer(model, optimizers, agent=agent, device=device, recon_type=recon_type,
@@ -111,6 +118,6 @@ def main(args: DictConfig) -> None:
 
     
 if __name__ == "__main__":
-    # wandb.init(project="Imagination-Parted VAE_training")
+    wandb.init(project="Imagination-Parted VAE_training")
     main()   
     

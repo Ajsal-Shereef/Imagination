@@ -15,7 +15,7 @@ from sentence_transformers import SentenceTransformer
 import sys
 sys.path.append('.')
 
-from env.env import calculate_probabilities, generate_caption
+from env.env import calculate_probabilities, generate_caption, MiniGridTransitionDescriber
 
 encoder = "all-MiniLM-L12-v2"
 
@@ -182,6 +182,8 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     Returns:
         list: Collected transitions as dictionaries.
     """
+    transition_captioner = MiniGridTransitionDescriber(5)
+    
     data = []
     captions = []
     class_prob = []
@@ -211,21 +213,22 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     
     for episode in range(1, episodes + 1):
         state, info = env.reset()
-        obj, caption = generate_caption(env.get_unprocesed_obs()['image'])
-        
+        c_agent_loc = env.agent_pos
         # frame = env.get_frame()
         # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        # cv2.imwrite("previous_frame.png",frame)
-        
-        prob = calculate_probabilities(env.agent_pos, 
-                                       env.get_unprocesed_obs()['image'], 
-                                       env.get_unprocesed_obs()['direction'], 
-                                       (2,4), 
-                                       (4,2))
-        class_prob.append(prob)
-        # caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
-        # captions.append(caption_encoding)
-        #caption = state_captioner.generate_caption(state)
+        # cv2.imwrite("previous_frame.png", frame)
+        transition_caption = transition_captioner.generate_description(agent_prev_pos = None, 
+                                                                       agent_curr_pos = c_agent_loc, 
+                                                                       agent_prev_dir = None, 
+                                                                       agent_curr_dir = env.get_unprocesed_obs()['direction'], 
+                                                                       prev_view = None,
+                                                                       curr_view = env.get_unprocesed_obs()['image'],
+                                                                       red_ball_pos = (2,4), 
+                                                                       green_ball_pos = (4,2),
+                                                                       agent_action = None)
+        caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
+        captions.append(caption_encoding)
+        # caption = state_captioner.generate_caption(state)
         # state = preprocess_observation(state)
         data.append(state)
         
@@ -237,28 +240,58 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
                 action = select_action_random(env.action_space)
             else:
                 action = select_action_q_network(q_network, state, device)
-            
-            next_state, reward, terminated, truncated, info = env.step(action)
-            
+                
             # frame = env.get_frame()
             # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # cv2.imwrite("frame.png", frame)
+            # cv2.imwrite("previous_frame.png", frame)
             
+            p_agent_loc = env.agent_pos
+            
+            p_state = env.get_unprocesed_obs()
+            obj, caption = generate_caption(p_state['image'])
             prob = calculate_probabilities(env.agent_pos, 
                                        env.get_unprocesed_obs()['image'], 
                                        env.get_unprocesed_obs()['direction'], 
                                        (2,4), 
                                        (4,2))
             class_prob.append(prob)
+            
+            next_state, reward, terminated, truncated, info = env.step(action)
+            if terminated:
+                print("Agent picked some objects")
+            c_state = env.get_unprocesed_obs()
+            
+            # c_frame = env.get_frame()
+            # c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
+            # cv2.imwrite("frame.png", c_frame)
+            
+            c_agent_loc = env.agent_pos
+            transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
+                                                                           agent_curr_pos = c_agent_loc, 
+                                                                           agent_prev_dir = p_state['direction'], 
+                                                                           agent_curr_dir = c_state['direction'], 
+                                                                           prev_view = p_state['image'],
+                                                                           curr_view = c_state['image'],
+                                                                           red_ball_pos = (2,4), 
+                                                                           green_ball_pos = (4,2),
+                                                                           agent_action = action)
+            
+            prob = calculate_probabilities(env.agent_pos, 
+                                           env.get_unprocesed_obs()['image'], 
+                                           env.get_unprocesed_obs()['direction'], 
+                                           (2,4),
+                                           (4,2))
+            class_prob.append(prob)
             done = terminated + truncated
-            obj, caption = generate_caption(env.get_unprocesed_obs()['image'])
-            # caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device)
-            # captions.append(caption_encoding)
+            # obj, caption = generate_caption(c_state['image'])
+            caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
+            captions.append(caption_encoding)
             # next_state = preprocess_observation(next_state)
             # Store the transition
             data.append(next_state)
             
             state = next_state
+            p_state = c_state
             step += 1
         
         print(f"Episode {episode}/{episodes} finished after {step} steps.")

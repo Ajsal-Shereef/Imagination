@@ -83,7 +83,7 @@ class Trainer:
 
         epoch_bar = tqdm(range(epochs), desc="Training Progress", unit="epoch")
         for epoch in epoch_bar:
-            warm_up_mean_loss, separated_mean_epoch_loss, imagined_losses = self._train_epoch(data_loader, warm_up_loader)
+            warm_up_mean_loss, warm_up_imagined_loss, separated_mean_epoch_loss, imagined_losses = self._train_epoch(data_loader, warm_up_loader)
             epoch_bar.set_postfix({'Loss': separated_mean_epoch_loss[0], 
                               'Recon': separated_mean_epoch_loss[1], 
                               'Prior_loss': separated_mean_epoch_loss[2], 
@@ -107,6 +107,7 @@ class Trainer:
                 self.model.save(epoch)
             if warm_up_loader is not None:
                 self.scheduler_warm_up.step(warm_up_mean_loss)
+                self.scheduler_imagination_net.step(warm_up_imagined_loss)
             self.scheduler_model.step(separated_mean_epoch_loss[0])
             if run_after_epoch is not None:
                 run_after_epoch(epoch, *run_after_epoch_args)
@@ -124,7 +125,7 @@ class Trainer:
             separated_sum_loss += loss[0]
             imagined_losses += loss[1]
 
-        return warm_up_loss / (batch_idx + 1), separated_sum_loss / len(data_loader.dataset), imagined_losses / len(data_loader.dataset)
+        return warm_up_loss / (batch_idx + 1), warm_up_imagined_loss/(batch_idx + 1), separated_sum_loss / len(data_loader.dataset), imagined_losses
 
     def _warm_up(self, loader):
         if not loader:
@@ -194,8 +195,8 @@ class Trainer:
         imagined_states_inference = self.model(imagined_states.view(-1, data.shape[-1]))[1]
         imagined_states_inference = imagined_states_inference['log_c']
         self.model.train()
-        agent_action = self.agent.get_action(data).to(self.device)
-        imagined_state_action = self.agent.get_action(imagined_states.view(-1, data.shape[-1])).to(self.device)
+        agent_action = self.agent.actor_local(data).to(self.device)
+        imagined_state_action = self.agent.actor_local(imagined_states.view(-1, data.shape[-1])).to(self.device)
         # imagined_state_action.view(-1, self.model.sum_c_dims)
         
         loss, imagination_losses = self._imagination_loss(data, imagined_states, agent_action, imagined_state_action, imagined_states_inference)
@@ -279,13 +280,11 @@ class Trainer:
         # Concatenate them along the first dimension
         target = torch.cat((target1, target2), dim=0)  # Shape: [2000, 2]
         cl_loss = F.cross_entropy(imagined_states_inference, target.float().to(self.device), reduction='mean')
-        
+
         
         # 3. Action consistency loss
-        actions_repeated = agent_action.repeat(self.model.c_dims[0])
-        imagined_state_action = F.one_hot(imagined_state_action, num_classes=self.model.env.action_space.n).float()
-        target_actions = F.one_hot(actions_repeated, num_classes=self.model.env.action_space.n).float()
-        action_loss = F.mse_loss(imagined_state_action, target_actions, reduction='mean')
+        actions_repeated = agent_action.repeat(self.model.c_dims[0], 1)
+        action_loss = F.mse_loss(imagined_state_action, actions_repeated, reduction='mean')
         
         loss = cl_loss + action_loss + prox_loss
         return loss, np.array([cl_loss.item(), action_loss.item(), prox_loss.item()])
