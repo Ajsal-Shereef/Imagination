@@ -6,6 +6,8 @@ import torch.nn.functional as F
 from architectures.mlp import MLP, Linear
 from architectures.Layers import *
 from architectures.film import FiLMLayer
+from env.env import MiniGridTransitionDescriber
+from sentence_transformers import SentenceTransformer
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 warnings.filterwarnings('ignore')
@@ -26,21 +28,30 @@ class ImaginationNet(nn.Module):
         """
         super(ImaginationNet, self).__init__()
         self.env = env
+        self.config = config
         self.input_dim = env.observation_space.shape[0]
-        hidden_layers = config.hidden_layers
+        self.sentence_encoder = SentenceTransformer(config.Imagination_General.encoder_model, device=device)
+        #Freezing the encoder weights to prevent updating
+        for params in self.sentence_encoder.parameters():
+            params.requires_grad = False
+        latent_dim = self.sentence_encoder.get_sentence_embedding_dimension()
+        hidden_layers = config.Imagination_Network.hidden_layers
         self.encoder = MLP(input_size = self.input_dim,
-                           output_size = config.feature_dim,
+                           output_size = config.Imagination_Network.feature_dim,
                            hidden_sizes = hidden_layers,
                            output_activation = F.relu,
                            dropout_prob = 0.0)
-        self.fc1 = Linear(in_dim = config.feature_dim, 
+        self.lstm = torch.nn.LSTM(input_size = config.Imagination_Network.feature_dim, hidden_size=config.Imagination_Network.lstm_hidden_size, batch_first=True)
+        self.film_layer = FiLMLayer(config.Imagination_Network.feature_dim, latent_dim)
+        self.fc1 = Linear(in_dim = config.Imagination_Network.lstm_hidden_size, 
                           out_dim = self.input_dim)
-        self.fc2 = Linear(in_dim = config.feature_dim, 
+        self.fc2 = Linear(in_dim = config.Imagination_Network.lstm_hidden_size, 
                           out_dim = self.input_dim)
         self.agent = agent
         self.num_goals = num_goals
         self.ce_loss = nn.CrossEntropyLoss(reduction='mean')
         self.mse_loss = nn.MSELoss(reduction='mean')
+        self.captioner = MiniGridTransitionDescriber(5)
         #Preventing agent to take random action.
         # if config.General.agent == 'dqn':
         #     self.agent.set_episode_step()
@@ -63,52 +74,21 @@ class ImaginationNet(nn.Module):
         class_loss = 0.0
         policy_loss = 0.0
         proximity_loss = 0.0
-
-        # Forward pass through VAE and SAC agent for original state
-        # with torch.no_grad():
-        _, state_inference_out = self.vae(state)  # Get VAE class probabilities
-        agent_action = self.agent.get_action(state).to(state.device)  # Get agent's action for original state
-        agent_action_one_hot = F.one_hot(agent_action, num_classes=self.env.action_space.n).float()
-
-        # # Class probabilities from the VAE for the original state
-        # state_class_prob = torch.exp(state_inference_out['log_c'])
-
-        # # Prepare targets for the two classes (target distributions)
-        # max_indices = state_class_prob.argmax(dim=1)
-        # target1 = torch.zeros_like(state_class_prob)
-        # target2 = torch.zeros_like(state_class_prob)
-
-        # # Assign probabilities based on max indices
-        # target1[max_indices == 0] = state_class_prob[max_indices == 0]
-        # target2[max_indices == 0] = 1 - state_class_prob[max_indices == 0]
-        # target2[max_indices == 1] = state_class_prob[max_indices == 1]
-        # target1[max_indices == 1] = 1 - state_class_prob[max_indices == 1]
-
-        # # Stack targets for each imagined state
-        # target_distributions = torch.stack((target1, target2), dim=0)
-
+        b,t,f = state.shape
+        # Forward pass through SAC agent for original state
+        agent_action = self.agent.actor_local(state.view(b*t,-1)).to(state.device)  # Get agent's action for original state
         # Loss for each imagined state
         for i in range(self.num_goals):
             imagined_state = imagined_states[:, i, :]
-
-            # 1. Negative log-likelihood loss for class consistency
-            # with torch.no_grad():
-            _, imagined_inference_out = self.vae(imagined_state)
-            imagined_class_prob = torch.exp(imagined_inference_out['log_c'])
-            target = torch.zeros_like(imagined_class_prob)
-            target[:,i] = 1
-            # cl_loss = F.cross_entropy(imagined_class_prob.log(), target_distributions[i])
-            cl_loss = F.cross_entropy(imagined_class_prob.log(), target)
-
-            # 2. Proximity loss between imagined state and original state
+            # 1. Proximity loss between imagined state and original state
             prox_loss = F.mse_loss(imagined_state, state)
 
-            # 3. Action consistency loss with SAC policy
-            # with torch.no_grad():
-            imagined_action = self.agent.get_action(imagined_state).to(state.device)
-            imagined_action_one_hot = F.one_hot(imagined_action, num_classes=self.env.action_space.n).float()
-            action_loss = F.mse_loss(imagined_action_one_hot, agent_action_one_hot)
-
+            # 2. Action consistency loss with SAC policy
+            imagined_action = self.agent.actor_local(imagined_state.contiguous().view(b*t,-1)).to(state.device)
+            action_loss = F.mse_loss(imagined_action, agent_action)
+            
+            # 3. Goal consistency loss
+            caption = self.captioner.generate_description(imagined_states[0,0,0,:], imagined_states[0,0,1,:])
             # Aggregate losses
             total_loss += 1.00*cl_loss + 0.50 * prox_loss + 0.50 * action_loss
             class_loss += cl_loss
@@ -190,7 +170,7 @@ class ImaginationNet(nn.Module):
     #     # Return the average loss across all N imagined states
     #     return total_loss, class_loss, policy_loss, proximity_loss 
         
-    def forward(self, state):
+    def forward(self, state, caption):
         """
         Forward pass through the network. Given a state, outputs N imagined states.
         
@@ -201,10 +181,17 @@ class ImaginationNet(nn.Module):
         """
         if not isinstance(state, torch.Tensor):
             state = torch.tensor(state).float().unsqueeze(0).to(device)
-        features = self.encoder(state)
-        differential_state1 = self.fc1(features)
-        differential_state2 = self.fc2(features)
-        return torch.stack([differential_state1 + state, differential_state2 + state], dim = 1) #[batch_size, 2, delta_dim]
+        b,t,f = state.shape
+        input = state.view(b*t, -1)
+        caption = caption.view(caption.shape[0]*caption.shape[1], -1)
+        features = self.encoder(input)
+        film_layer_out = self.film_layer(features, caption)
+        film_layer_out = film_layer_out.view(b, t, -1)
+        lstm_output, _ = self.lstm(film_layer_out)
+        lstm_output = lstm_output.contiguous().view(b*t, -1)
+        differential_state1 = self.fc1(lstm_output)
+        differential_state2 = self.fc2(lstm_output)
+        return torch.stack([differential_state1.view(b,t,f) + state, differential_state2.view(b,t,f) + state], dim = 1) #[batch_size, 2, delta_dim]
     
     def save(self, path):
         """

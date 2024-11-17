@@ -315,7 +315,7 @@ class MiniGridTransitionDescriber:
 
         # Get objects in view before and after the transition
         curr_objects = self.get_objects_in_view(curr_view)
-        if agent_prev_pos or agent_prev_dir is None:
+        if (agent_prev_pos or agent_prev_dir) is None:
             if curr_objects:
                 words = []
                 for pos, (color_name, obj_name) in curr_objects.items():
@@ -372,7 +372,7 @@ class MiniGridTransitionDescriber:
         if disappeared_objects:
             for color_name, obj_name in disappeared_objects:
                 if agent_action == 3:
-                    disappearance_desc += f"The agent picked up the {color_name} {obj_name}. "
+                    disappearance_desc += f"The agent picked the {color_name} {obj_name}. "
                 else:
                     obj_words = " ".join([color_name, obj_name])
                     words.append(obj_words)

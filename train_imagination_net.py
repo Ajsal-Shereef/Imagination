@@ -19,7 +19,6 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def train_imagination_net(config,
                           env,
-                          vae,  
                           agent, 
                           dataloader, 
                           checkpoint_interval, 
@@ -28,22 +27,22 @@ def train_imagination_net(config,
     imagination_net = ImaginationNet(env = env,
                                      config = config,
                                      num_goals = num_goals,
-                                     vae = vae,
                                      agent = agent).to(device)
-    wandb.watch(imagination_net)
+    # wandb.watch(imagination_net)
     #Creating the optimizer
     optimizer = optim.Adam(imagination_net.parameters(), lr=config['lr'])
     # nn_utils.clip_grad_norm_(imagination_net.parameters(), max_norm=config['max_gradient'])
-    epoch_bar = tqdm(range(config.Network.epoch), desc="Training Progress", unit="epoch")
+    epoch_bar = tqdm(range(config.Imagination_Network.epoch), desc="Training Progress", unit="epoch")
     for epoch in epoch_bar:
         total_loss = 0
         total_class_loss = 0
         total_policy_loss = 0
         total_proximity_loss = 0
-        for data, indices in dataloader:
+        for data, caption in dataloader:
             data = data.float().to(device)
+            caption = caption.float().to(device)
             optimizer.zero_grad()
-            imagined_state = imagination_net(data)
+            imagined_state = imagination_net(data, caption)
             loss, class_loss, policy_loss, proximity_loss  = imagination_net.compute_loss(data, imagined_state)
             loss.backward()
             optimizer.step()
@@ -76,10 +75,10 @@ def main(args: DictConfig) -> None:
     # Log the configuration
     # wandb.config.update(OmegaConf.to_container(args, resolve=True))
     #Loading the dataset
-    dataset = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/data.pkl')
-    # captions = get_data(f'{args.General.datapath}/{args.General.encoder_model}/captions.pkl')
+    dataset = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/states.npy')
+    captions = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/caption.npy')
     # Initialize dataset and dataloader
-    dataset = TextDataset(dataset)
+    dataset = TwoListDataset(dataset, captions)
     dataloader = DataLoader(dataset, batch_size=args.Imagination_Network.batch_size, shuffle=True)
     if args.General.env ==  "SimplePickup":
         from env.env import SimplePickup
@@ -88,53 +87,7 @@ def main(args: DictConfig) -> None:
     # Device configuration
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
-    # Get the goals from the LLM. #TODO Need to supply the controllable entity within the environment
-    # goal_gen = GetLLMGoals()
-    # goals = goal_gen.llmGoals([])
-    # Load the sentecebert model to get the embedding of the goals from the LLM
-    # sentencebert = SentenceTransformer(args.General.encoder_model)
-    # for params in sentencebert.parameters():
-    #     params.requires_grad = False
-    # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
-    # with torch.no_grad():
-    #     mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device, show_progress_bar=False)
-    # Define prior means (mu_p) for each mixture component
-    # Initialize VAE with learnable prior means
-    # latent_dim = sentencebert.get_sentence_embedding_dimension()
-    # num_mixtures = len(goals)
-    # vae = GMVAE(
-    #     input_dim = dataset[0].shape[0], 
-    #     encoder_hidden = args.Network.encoder_hidden,
-    #     decoder_hidden = args.Network.decoder_hidden, 
-    #     latent_dim=latent_dim, 
-    #     num_mixtures=num_mixtures, 
-    #     mu_p=mu_p
-    # )
-    #Loading the pretrained VAE
-    # vae.load(args.General.vae_checkpoint)
-    # vae.to(device)
-    #Freezing the VAE weight to prevent updating
-    # for params in vae.parameters():
-    #     params.requires_grad = False
-    
-    #Loading Parted VAE
-    latent_spec = args.P_VAE_Network.latent_spec
-    disc_priors = [[1/args.P_VAE_General.num_goals]*args.P_VAE_General.num_goals]
-    
-    vae = VAE(args.P_VAE_Network.input_dim, 
-              args.P_VAE_Network.encoder_hidden_dim, 
-              args.P_VAE_Network.decoder_hidden_dim, 
-              args.P_VAE_Network.output_size, 
-              latent_spec, 
-              c_priors=disc_priors, 
-              save_dir='',
-              device=device)
-    vae.load(args.P_VAE_General.vae_checkpoint)
-    #Freezing the VAE weight to prevent updating
-    for params in vae.parameters():
-        params.requires_grad = False
-        
-    if args.General.agent == 'dqn':
+    if args.Imagination_General.agent == 'dqn':
         agent = DQNAgent(env, 
                          args.General, 
                          args.policy_config, 
@@ -160,10 +113,9 @@ def main(args: DictConfig) -> None:
     #Train imagination Net
     train_imagination_net(config = args, 
                           env= env,
-                          vae = vae,
                           agent = agent, 
                           dataloader = dataloader, 
-                          checkpoint_interval = args.Network.checkpoint_interval, 
+                          checkpoint_interval = args.Imagination_Network.checkpoint_interval, 
                           checkpoint_dir = model_dir,
                           num_goals = args.Imagination_General.num_goals)
     

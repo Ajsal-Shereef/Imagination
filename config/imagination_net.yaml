@@ -12,8 +12,9 @@ Imagination_General:
 Imagination_Network:
   lr : 0.0001
   batch_size: 1000
-  hidden_layers : [512, 512]
+  hidden_layers : [512]
   epoch : 1000
   max_gradient : 10
   checkpoint_interval : 200
-  feature_dim : 128
+  feature_dim : 64
+  lstm_hidden_size : 512

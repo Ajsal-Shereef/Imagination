@@ -52,13 +52,14 @@ def train(config):
         sentencebert = SentenceTransformer(config.encoder)
         trajectory_buffer = TrajectoryReplyBuffer(max_episode_len = config.max_ep_len, 
                                                   feature_dim = env.observation_space.shape[0], 
-                                                  buffer_size = config.buffer_size, 
+                                                  buffer_size = config.episodes, 
                                                   encoded_dim = sentencebert.get_sentence_embedding_dimension())
         
         collect_random(env=env, dataset=sac_agent.buffer, num_samples=2000)
         for i in range(1, config.episodes+1):
             states = []
             captions = []
+            language = []
             state, info = env.reset()
             c_agent_loc = env.agent_pos
             transition_caption = transition_captioner.generate_description(agent_prev_pos = None, 
@@ -70,6 +71,7 @@ def train(config):
                                                                            red_ball_pos = (2,4), 
                                                                            green_ball_pos = (4,2),
                                                                            agent_action = None)
+            language.append(transition_caption)
             caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
             
             states.append(state)
@@ -93,6 +95,9 @@ def train(config):
                                                                                red_ball_pos = (2,4), 
                                                                                green_ball_pos = (4,2),
                                                                                agent_action = action)
+                c_frame = env.get_frame()
+                c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
+                cv2.imwrite("frame.png", c_frame)
                 caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
                 done = terminated + truncated
                 sac_agent.buffer.add(state, action, reward, next_state, done)
@@ -102,10 +107,22 @@ def train(config):
                 state = next_state
                 states.append(state)
                 captions.append(caption_encoding.detach().cpu().numpy())
+                language.append(transition_caption)
                 rewards += reward
                 episode_steps += 1
                 if done:
-                    trajectory_buffer.add(states, captions)
+                    if terminated:
+                        print('picked something')
+                        transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
+                                                                                       agent_curr_pos = c_agent_loc, 
+                                                                                       agent_prev_dir = p_state['direction'], 
+                                                                                       agent_curr_dir = c_state['direction'], 
+                                                                                       prev_view = p_state['image'],
+                                                                                       curr_view = c_state['image'],
+                                                                                       red_ball_pos = (2,4), 
+                                                                                       green_ball_pos = (4,2),
+                                                                                       agent_action = action)
+                    trajectory_buffer.add(states, captions, language)
                     break
 
             average.append(rewards)

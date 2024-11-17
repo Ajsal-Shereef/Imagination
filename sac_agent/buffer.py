@@ -54,28 +54,34 @@ class TrajectoryReplyBuffer:
         
         self.states_buffer = np.zeros(shape=(self.buffer_size, self.max_episode_len+1, self.feature_dim), dtype=np.float32)
         self.caption_buffer = np.zeros(shape=(self.buffer_size, self.max_episode_len+1, self.encoded_dim), dtype=np.float32)
+        self.ep_len = np.zeros(shape=(self.buffer_size, 1), dtype=np.float32)
         
     def dump_buffer_data(self, dump_dir):
         
-        data_path = os.path.join(dump_dir, 'caption')
-        np.save(data_path, self.caption_buffer)
-        print(f"[INFO] states data with len {len(self.caption_buffer)} saved to {data_path}")
+        data_path = os.path.join(dump_dir, 'states.pkl')
+        with open(data_path, 'wb') as f:
+            pickle.dump(self.states_buffer, f)
+        print(f"Collected {len(self.states_buffer)} states and saved to {data_path}")
         
-        # data_path = os.path.join(dump_dir, 'states')
-        np.save(dump_dir + '/states', self.states_buffer)
-        print(f"[INFO] states data with len {len(self.states_buffer)} saved to {data_path}")
+        data_path = os.path.join(dump_dir, 'caption_encode.pkl')
+        with open(data_path, 'wb') as f:
+            pickle.dump(self.caption_buffer, f)
+        print(f"Collected {len(self.caption_buffer)} caption encoding and saved to {data_path}")
+        
+        data_path = os.path.join(dump_dir, 'episode_len.pkl')
+        with open(data_path, 'wb') as f:
+            pickle.dump(self.ep_len, f)
+        print(f"Collected {len(self.ep_len)} episode length and saved to {data_path}")
             
-            
-    def add(self, state, caption):
+    def add(self, state, caption, language):
         traj_length = len(state)
         self.next_ind = self.next_spot_to_add
         self.next_spot_to_add = self.next_spot_to_add + 1
         if self.next_spot_to_add >= self.buffer_size:
             self.buffer_is_full = True
         self.states_buffer[self.next_ind, :traj_length] = state
-        self.states_buffer[self.next_ind, traj_length:] = 0
         self.caption_buffer[self.next_ind, :traj_length] = caption
-        self.caption_buffer[self.next_ind, traj_length:] = 0
+        self.ep_len[self.next_ind] = traj_length
         
     def sample(self, batch_size):
         indices = np.random.choice(range(self.buffer_size), size = batch_size)

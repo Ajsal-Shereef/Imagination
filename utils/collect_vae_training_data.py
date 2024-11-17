@@ -189,7 +189,7 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     class_prob = []
     
     # Load the sentecebert model to get the embedding of the goals from the LLM
-    sentencebert = SentenceTransformer(encoder)
+    sentencebert = SentenceTransformer(encoder, device=device)
 
     # Initialize Q-network if not using random policy
     if not use_random:
@@ -241,9 +241,9 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             else:
                 action = select_action_q_network(q_network, state, device)
                 
-            # frame = env.get_frame()
-            # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            # cv2.imwrite("previous_frame.png", frame)
+            frame = env.get_frame()
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            cv2.imwrite("previous_frame.png", frame)
             
             p_agent_loc = env.agent_pos
             
@@ -261,9 +261,9 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
                 print("Agent picked some objects")
             c_state = env.get_unprocesed_obs()
             
-            # c_frame = env.get_frame()
-            # c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
-            # cv2.imwrite("frame.png", c_frame)
+            c_frame = env.get_frame()
+            c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
+            cv2.imwrite("frame.png", c_frame)
             
             c_agent_loc = env.agent_pos
             transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
