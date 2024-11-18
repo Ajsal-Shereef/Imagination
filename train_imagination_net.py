@@ -10,9 +10,10 @@ from dqn.dqn import DQNAgent
 from sac_agent.agent import SAC
 from partedvae.models import VAE
 from torch.utils.data import DataLoader
+from train_captioner import SurrogateModel
 from omegaconf import DictConfig, OmegaConf
-# from utils.get_llm_output import GetLLMGoals
-# from sentence_transformers import SentenceTransformer
+from utils.get_llm_output import GetLLMGoals
+from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -23,12 +24,16 @@ def train_imagination_net(config,
                           dataloader, 
                           checkpoint_interval, 
                           checkpoint_dir,
+                          encoder,
+                          goals,
                           num_goals):
     imagination_net = ImaginationNet(env = env,
                                      config = config,
                                      num_goals = num_goals,
-                                     agent = agent).to(device)
-    # wandb.watch(imagination_net)
+                                     agent = agent,
+                                     goals= goals,
+                                     encoder = encoder).to(device)
+    wandb.watch(imagination_net)
     #Creating the optimizer
     optimizer = optim.Adam(imagination_net.parameters(), lr=config['lr'])
     # nn_utils.clip_grad_norm_(imagination_net.parameters(), max_norm=config['max_gradient'])
@@ -42,7 +47,7 @@ def train_imagination_net(config,
             data = data.float().to(device)
             caption = caption.float().to(device)
             optimizer.zero_grad()
-            imagined_state = imagination_net(data, caption)
+            imagined_state, hx = imagination_net(data, caption)
             loss, class_loss, policy_loss, proximity_loss  = imagination_net.compute_loss(data, imagined_state)
             loss.backward()
             optimizer.step()
@@ -73,10 +78,10 @@ def train_imagination_net(config,
 @hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     # Log the configuration
-    # wandb.config.update(OmegaConf.to_container(args, resolve=True))
+    wandb.config.update(OmegaConf.to_container(args, resolve=True))
     #Loading the dataset
-    dataset = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/states.npy')
-    captions = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/caption.npy')
+    dataset = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/states.pkl')
+    captions = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/caption_encode.pkl')
     # Initialize dataset and dataloader
     dataset = TwoListDataset(dataset, captions)
     dataloader = DataLoader(dataset, batch_size=args.Imagination_Network.batch_size, shuffle=True)
@@ -85,8 +90,10 @@ def main(args: DictConfig) -> None:
         env = SimplePickup(max_steps=args.Imagination_General.max_ep_len, agent_view_size=5, size=7)
     # dataset = normalize_data(dataset)
     # Device configuration
-    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-    print(f"Using device: {device}")
+    llm_goals = GetLLMGoals()
+    goals = llm_goals.llmGoals('')
+    sentenceEncoder = SentenceTransformer(args.Imagination_General.encoder_model, device=device)
+    goals_encoded = sentenceEncoder.encode(goals, convert_to_tensor=True, device=device)
     if args.Imagination_General.agent == 'dqn':
         agent = DQNAgent(env, 
                          args.General, 
@@ -105,6 +112,12 @@ def main(args: DictConfig) -> None:
     #Freezing the SAC agent weight to prevent updating
     for params in agent.parameters():
         params.requires_grad = False
+        
+    encoder = SurrogateModel(2*env.observation_space.shape[0], 384)
+    encoder.load_params(args.Imagination_General.sentece_encoder_model)
+    
+    for params in encoder.parameters():
+        params.requires_grad = False
     
     # Create data directory if it doesn't exist
     model_dir = 'models/imagination_net'
@@ -117,9 +130,11 @@ def main(args: DictConfig) -> None:
                           dataloader = dataloader, 
                           checkpoint_interval = args.Imagination_Network.checkpoint_interval, 
                           checkpoint_dir = model_dir,
+                          encoder = encoder,
+                          goals = goals_encoded,
                           num_goals = args.Imagination_General.num_goals)
     
 if __name__ == "__main__":
-    # wandb.init(project="Imagination-net_training")
+    wandb.init(project="Imagination-net_training")
     main()
     

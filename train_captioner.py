@@ -5,6 +5,7 @@ from utils.utils import *
 import torch.optim as optim
 from architectures.mlp import MLP
 from torch.utils.data import DataLoader
+from transformers import AutoTokenizer, AutoModel
 from sentence_transformers import SentenceTransformer
 from transformers import GPT2Tokenizer, GPT2LMHeadModel
 from env.env import SimplePickup, MiniGridTransitionDescriber
@@ -14,110 +15,39 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 env = SimplePickup(max_steps=20, agent_view_size=5, size=7)
 transition_captioner = MiniGridTransitionDescriber(5)
 
-num_data = 10000
+num_data = 20000
 
-# Dataset Class
-class FeatureToTextDataset(Dataset):
-    def __init__(self, features, labels, tokenizer, max_length=20):
-        """
-        Args:
-            features (torch.Tensor): Feature tensors of shape (num_samples, feature_dim).
-            labels (list): Corresponding natural language descriptions.
-            tokenizer: Tokenizer for the text model.
-            max_length (int): Maximum sequence length for tokenized labels.
-        """
-        self.features = features
-        self.labels = labels
-        self.tokenizer = tokenizer
-        self.max_length = max_length
+# Custom Dataset
+class FeatureCaptionDataset(Dataset):
+    def __init__(self, features, captions):
+        self.features = features  # List of feature tensors
+        self.captions = captions  # List of corresponding captions
 
     def __len__(self):
         return len(self.features)
 
     def __getitem__(self, idx):
-        feature = self.features[idx]
-        label = self.labels[idx]
+        return self.features[idx], self.captions[idx]
 
-        # Tokenize the label
-        tokenized_label = self.tokenizer(
-            label,
-            padding="max_length",
-            truncation=True,
-            max_length=self.max_length,
-            return_tensors="pt",
-        )
-        return {
-            "feature": feature,
-            "input_ids": tokenized_label.input_ids.squeeze(0),
-            "attention_mask": tokenized_label.attention_mask.squeeze(0),
-            "language" : label
-        }
-
-
-# Model Class
-class FeatureToTextModel(nn.Module):
-    def __init__(self, feature_dim, max_timesteps=20, input_size=768, text_model_name="t5-small"):
-        super(FeatureToTextModel, self).__init__()
-        self.max_timesteps = max_timesteps
-        self.input_size = input_size
-
-        # Linear layer to map features to sequence format
+# CSurrogate Model
+class SurrogateModel(nn.Module):
+    def __init__(self, feature_dim, text_embedding_dim):
+        super(SurrogateModel, self).__init__()
         self.feature_encoder = nn.Sequential(
-                                            nn.Linear(feature_dim, 1024),
-                                            nn.ReLU(),
-                                            nn.Linear(1024, max_timesteps * input_size)
-                                            )
-        self.text_model = T5ForConditionalGeneration.from_pretrained(text_model_name)
-        self.tokenizer = T5Tokenizer.from_pretrained(text_model_name)
+            nn.Linear(feature_dim, 512),
+            nn.ReLU(),
+            nn.Linear(512, text_embedding_dim)  # Match text embedding dimension
+        )
 
-        # Add padding token if not present
-        if not self.tokenizer.pad_token:
-            self.tokenizer.add_special_tokens({"pad_token": "[PAD]"})
-            self.text_model.resize_token_embeddings(len(self.tokenizer))
-
-    def forward(self, features, labels=None, attention_mask=None):
-        # Encode feature tensor
-        encoded_features = self.feature_encoder(features)  # Shape: (batch_size, max_timesteps * input_size)
-        encoded_features = encoded_features.view(features.size(0), self.max_timesteps, self.input_size)
-        encoded_features = (encoded_features - encoded_features.mean(dim=1, keepdim=True)) / (encoded_features.std(dim=1, keepdim=True) + 1e-8)
-
-        # Pass through the T5 model
-        if labels is not None:
-            outputs = self.text_model(
-                inputs_embeds=encoded_features,
-                labels=labels,
-                attention_mask=attention_mask,
-            )
-        else:
-            outputs = self.text_model(inputs_embeds=encoded_features)
-
-        return outputs
-
-    def generate(self, features, max_length=20):
-        # Encode feature tensor
-        with torch.no_grad():
-            encoded_features = self.feature_encoder(features)
-            encoded_features = encoded_features.view(features.size(0), self.max_timesteps, self.input_size)
-            encoded_features = (encoded_features - encoded_features.mean(dim=1, keepdim=True)) / (encoded_features.std(dim=1, keepdim=True) + 1e-8)
-
-        # Generate sequence
-        generated_ids = self.text_model.generate(
-            inputs_embeds=encoded_features,
-            max_length=max_length,
-            pad_token_id=self.tokenizer.pad_token_id,
-            eos_token_id=self.tokenizer.eos_token_id,
-            bos_token_id=self.tokenizer.bos_token_id,
-            do_sample=True,  # Enable sampling
-            top_k=20,        # Restrict to top 50 tokens
-            top_p=0.1,      # Use nucleus sampling
-            temperature=0.1, # Introduce randomness
-            )
-
-        # Decode generated text
-        captions = self.tokenizer.batch_decode(generated_ids, skip_special_tokens=True)
-        return captions
-
-
+    def forward(self, features):
+        # Encode features
+        return self.feature_encoder(features)
+    
+    def load_params(self, path):
+        """Load model and optimizer parameters."""
+        params = torch.load(path, map_location=device)
+        self.load_state_dict(params)
+        print("[INFO] loaded the SAC model", path)
 
 def collect_data(max_timestep):
     input = []
@@ -142,7 +72,7 @@ def collect_data(max_timestep):
                                                                        red_ball_pos = (2,4), 
                                                                        green_ball_pos = (4,2),
                                                                        agent_action = action)
-        caption_encoding = sentence_encoder.encode(transition_caption, convert_to_tensor=True, device=device)
+        caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
         captions.append(caption_encoding)
         done = terminated + truncated
         input.append(data)
@@ -158,47 +88,36 @@ def collect_data(max_timestep):
 def main():
     wandb.init(project="Captioner Training")
     feature_dim = 158
-    max_timesteps = 20
-    input_size = 512
-    features, labels, captions = collect_data(max_timestep=num_data)
-    # Initialize tokenizer
-    tokenizer = T5Tokenizer.from_pretrained("t5-small")
-
+    features, labels, caption_encoding = collect_data(max_timestep=num_data)
+    
     # Dataset and DataLoader
-    dataset = FeatureToTextDataset(features, labels, tokenizer, max_length=max_timesteps)
+    dataset = FeatureCaptionDataset(features, caption_encoding)
     dataloader = DataLoader(dataset, batch_size=1000, shuffle=True)
 
-    # Initialize Model
-    model = FeatureToTextModel(feature_dim=feature_dim, max_timesteps=max_timesteps, input_size=input_size)
-
-    # Training Setup
+    # Model, Loss, Optimizer
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    criterion = nn.MSELoss()
+    model = SurrogateModel(feature_dim=feature_dim, text_embedding_dim=384).to(device)
+    optimizer = optim.Adam(model.parameters(), lr=1e-4)
     model.to(device)
-    optimizer = optim.Adam(model.parameters(), lr=5e-5)
-    criterion = nn.CrossEntropyLoss()
-    # for param in model.text_model.parameters():
-    #     param.requires_grad = False
-    # Training Loop
-    for epoch in range(500):  # Number of epochs
-        model.train()
+
+    for epoch in range(1000):  # Number of epochs
         total_loss = 0
-
-        for batch in dataloader:
-            features = batch["feature"].to(device)
-            labels = batch["input_ids"].to(device)
-            attention_mask = batch["attention_mask"].to(device)
-
+        for features, captions in dataloader:
+            features = features.to(device)
+        
+            # Forward pass
             optimizer.zero_grad()
-            outputs = model(features.float().to(device), labels, attention_mask)
+            feature_embeddings = model(features.float())
+            loss = criterion(feature_embeddings, captions)
 
-            loss = outputs.loss
+            # Backward pass
             loss.backward()
             optimizer.step()
-
             total_loss += loss.item()
         wandb.log({"loss" : np.mean(total_loss)}, step=epoch)
     torch.save(model.state_dict(), 'models/captioner.pth')
     
 if __name__ == "__main__":
-    sentence_encoder = SentenceTransformer("all-MiniLM-L12-v2", device=device)
+    sentencebert = SentenceTransformer("all-MiniLM-L12-v2", device=device)
     main()

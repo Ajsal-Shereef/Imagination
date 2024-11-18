@@ -257,8 +257,7 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             class_prob.append(prob)
             
             next_state, reward, terminated, truncated, info = env.step(action)
-            if terminated:
-                print("Agent picked some objects")
+
             c_state = env.get_unprocesed_obs()
             
             c_frame = env.get_frame()

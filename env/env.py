@@ -312,6 +312,7 @@ class MiniGridTransitionDescriber:
         - A string description of the agent's transition.
         """
         directions = ["right", "down", "left", "up"]
+        agent_moved = False
 
         # Get objects in view before and after the transition
         curr_objects = self.get_objects_in_view(curr_view)
@@ -358,13 +359,33 @@ class MiniGridTransitionDescriber:
         movement_desc = ""
         for obj in common_objects:
             if obj == ('red', 'ball'):
-                prev_dist = self.manhattan_distance(agent_prev_pos, red_ball_pos)
-                curr_dist = self.manhattan_distance(agent_curr_pos, red_ball_pos)
+                red_prev_dist = self.manhattan_distance(agent_prev_pos, red_ball_pos)
+                red_curr_dist = self.manhattan_distance(agent_curr_pos, red_ball_pos)
+                if red_curr_dist < red_prev_dist:
+                    movement_desc += f"The agent moved towards to the {obj[0]} {obj[1]}. "
+                    agent_moved = True
             elif obj == ('green', 'ball'):
-                prev_dist = self.manhattan_distance(agent_prev_pos, green_ball_pos)
-                curr_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
-            if curr_dist < prev_dist:
-                movement_desc += f"The agent moved closer to the {obj[0]} {obj[1]}. "
+                green_prev_dist = self.manhattan_distance(agent_prev_pos, green_ball_pos)
+                green_curr_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
+                if green_curr_dist < green_prev_dist:
+                    movement_desc += f"The agent moved towards to the {obj[0]} {obj[1]}. "
+                    agent_moved = True
+                    
+        if len(common_objects)>1 and agent_moved:
+            movement_desc = ""
+            if green_curr_dist>red_curr_dist:
+                movement_desc += f"The agent moved towards to the red ball. "
+            elif green_curr_dist<red_curr_dist:
+                movement_desc += f"The agent moved towards to the green ball. "
+            elif green_curr_dist==red_curr_dist:
+                turns_to_red = self.calculate_turns_needed(agent_curr_pos, red_ball_pos, agent_curr_dir)
+                turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
+                if turns_to_red < turns_to_green:
+                    movement_desc += "The agent moved towards to the red ball. "
+                elif turns_to_green < turns_to_red:
+                    movement_desc += "The agent moved towards to the green ball. "
+                else:
+                    movement_desc += "The agent moved equally towards red and green ball "
                     
         # Describe objects that disappeared from the view
         disappearance_desc = ""

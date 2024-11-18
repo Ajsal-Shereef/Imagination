@@ -11,17 +11,19 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 goal_gen = GetLLMGoals()
 goals = goal_gen.llmGoals([])
 # Load the sentecebert model to get the embedding of the goals from the LLM
-sentencebert = SentenceTransformer("all-MiniLM-L12-v2")
+sentencebert = SentenceTransformer("paraphrase-multilingual-mpnet-base-v2")
 # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
 mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
 
-caption1 = 'You see red ball, green ball and you are close to red ball'
-caption2 = 'You see green ball, red ball and you are close to red ball'
-caption3 = 'You see red ball and you are close to red ball'
-caption4 = 'You see green ball and you are close to green ball'
-caption5 = 'You see nothing'
-caption6 = 'You see red ball, green ball and you are close to green ball'
-caption7 = 'You see green ball, red ball and you are close to green ball'
+caption1 = 'The agent moved towards to the green ball.'
+caption2 = 'The agent moved towards to the red ball.'
+caption3 = 'The agent moved equally towards red and green ball'
+caption4 = 'The agent ignored the green ball'
+caption5 = 'The agent ignored the red ball'
+caption6 = 'The green ball appeared in the current view. Agent is closer to the red ball.'
+caption7 = 'The red ball appeared in the current view. Agent is closer to the red ball.'
+caption8 = 'The red ball appeared in the current view. Agent is closer to the green ball.'
+caption9 = 'The green ball appeared in the current view. Agent is closer to the green ball.'
 
 captions = [caption1, caption2, caption3, caption4, caption5, caption6, caption7]
 print(sentencebert.similarity(sentencebert.encode(captions, convert_to_tensor=True, device=device),
@@ -48,32 +50,46 @@ sm6 = F.softmax(torch.stack((cs6_1, cs6_2))/0.1, dim=-1)
 cs7_1 = F.cosine_similarity(sentencebert.encode(caption7, convert_to_tensor=True, device=device), mu_p[0], dim=-1)
 cs7_2 = F.cosine_similarity(sentencebert.encode(caption7, convert_to_tensor=True, device=device), mu_p[1], dim=-1)
 sm7 = F.softmax(torch.stack((cs7_1, cs7_2))/0.1, dim=-1)
+cs8_1 = F.cosine_similarity(sentencebert.encode(caption8, convert_to_tensor=True, device=device), mu_p[0], dim=-1)
+cs8_2 = F.cosine_similarity(sentencebert.encode(caption8, convert_to_tensor=True, device=device), mu_p[1], dim=-1)
+sm8 = F.softmax(torch.stack((cs8_1, cs8_2))/0.1, dim=-1)
+cs9_1 = F.cosine_similarity(sentencebert.encode(caption9, convert_to_tensor=True, device=device), mu_p[0], dim=-1)
+cs9_2 = F.cosine_similarity(sentencebert.encode(caption9, convert_to_tensor=True, device=device), mu_p[1], dim=-1)
+sm9 = F.softmax(torch.stack((cs9_1, cs9_2))/0.1, dim=-1)
 
 print(cs1_1)
 print(cs1_2)
 print(sm1)
-print('************')
+print('1************')
 print(cs2_1)
 print(cs2_2)
 print(sm2)
-print('************')
+print('2************')
 print(cs3_1)
 print(cs3_2)
 print(sm3)
-print('************')
+print('3************')
 print(cs4_1)
 print(cs4_2)
 print(sm4)
-print('************')
+print('4************')
 print(cs5_1)
 print(cs5_2)
 print(sm5)
-print('************')
+print('5************')
 print(cs6_1)
 print(cs6_2)
 print(sm6)
-print('************')
+print('6************')
 print(cs7_1)
 print(cs7_2)
 print(sm7)
+print('7************')
+print(cs8_1)
+print(cs8_2)
+print(sm8)
+print('8************')
+print(cs9_1)
+print(cs9_2)
+print(sm9)
 print("done")

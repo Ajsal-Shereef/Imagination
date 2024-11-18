@@ -95,9 +95,9 @@ def train(config):
                                                                                red_ball_pos = (2,4), 
                                                                                green_ball_pos = (4,2),
                                                                                agent_action = action)
-                c_frame = env.get_frame()
-                c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
-                cv2.imwrite("frame.png", c_frame)
+                # c_frame = env.get_frame()
+                # c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
+                # cv2.imwrite("frame.png", c_frame)
                 caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
                 done = terminated + truncated
                 sac_agent.buffer.add(state, action, reward, next_state, done)
@@ -112,7 +112,6 @@ def train(config):
                 episode_steps += 1
                 if done:
                     if terminated:
-                        print('picked something')
                         transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
                                                                                        agent_curr_pos = c_agent_loc, 
                                                                                        agent_prev_dir = p_state['direction'], 
@@ -137,7 +136,7 @@ def train(config):
                        "Bellmann error 2": bellmann_error2,
                        "Alpha": current_alpha,
                        "Steps": steps,
-                       "Episode": i,
+                       "Episode": i, 
                        "Buffer size": sac_agent.buffer.__len__()})
 
             # if (i %10 == 0) and config.log_video:

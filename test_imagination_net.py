@@ -14,15 +14,16 @@ from utils.utils import write_video
 # from gymnasium.wrappers import RecordVideo
 from omegaconf import DictConfig
 from utils.get_llm_output import GetLLMGoals
+from train_captioner import SurrogateModel
 from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 
 is_agent = False
 
-@hydra.main(version_base=None, config_path="config", config_name="imagination_net_master_config")
+@hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     if args.General.env ==  "SimplePickup":
-        from env.env import SimplePickup, generate_caption
+        from env.env import SimplePickup, generate_caption, MiniGridTransitionDescriber
         env = SimplePickup(max_steps=args.General.max_ep_len, agent_view_size=5, size=7, render_mode="rgb_array")
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -32,7 +33,7 @@ def main(args: DictConfig) -> None:
     goal_gen = GetLLMGoals()
     goals = goal_gen.llmGoals([])
     # Load the sentecebert model to get the embedding of the goals from the LLM
-    sentencebert = SentenceTransformer(args.General.encoder_model)
+    sentencebert = SentenceTransformer(args.Imagination_General.encoder_model)
     # Define prior means (mu_p) for each mixture component as the output from the sentencebert model
     mu_p = sentencebert.encode(goals, convert_to_tensor=True, device=device)
     # Define prior means (mu_p) for each mixture component
@@ -57,7 +58,7 @@ def main(args: DictConfig) -> None:
     # for params in vae.parameters():
     #     params.requires_grad = False
     
-    if args.General.agent == 'dqn':
+    if args.Imagination_General.agent == 'dqn':
         agent = DQNAgent(env, 
                         args.General, 
                         args.policy_config, 
@@ -68,35 +69,27 @@ def main(args: DictConfig) -> None:
                     state_size = env.observation_space.shape[0],
                     action_size = env.action_space.n,
                     device=device,
-                    buffer_size = args.General.buffer_size)
+                    buffer_size = args.Imagination_General.buffer_size)
     #Loading the pretrained weight of sac agent.
-    agent.load_params(args.General.agent_checkpoint)
+    agent.load_params(args.Imagination_General.agent_checkpoint)
     #Freezing the SAC agent weight to prevent updating
     for params in agent.parameters():
         params.requires_grad = False
         
-    #Loading Parted VAE
-    latent_spec = args.Training.latent_spec
-    disc_priors = [[1/args.General.num_goals]*args.General.num_goals]
-    
-    vae = VAE(args.Training.input_dim, 
-              args.Training.encoder_hidden_dim, 
-              args.Training.decoder_hidden_dim, 
-              args.Training.output_size, 
-              latent_spec, 
-              c_priors=disc_priors, 
-              save_dir='',
-              device=device)
-    vae.load(args.General.vae_checkpoint)
+    encoder = SurrogateModel(2*env.observation_space.shape[0], 384)
+    encoder.load_params(args.Imagination_General.sentece_encoder_model)
         
     imagination_net = ImaginationNet(env = env,
                                      config = args,
                                      num_goals = 2,
-                                     vae = vae,
-                                     agent = agent).to(device)
+                                     agent = agent,
+                                     goals= goals,
+                                     encoder = encoder).to(device)
         
-    imagination_net.load("models/imagination_net/imagination_net_epoch_200.tar")
+    imagination_net.load("models/imagination_net.pth")
     imagination_net.eval()
+    
+    transition_captioner = MiniGridTransitionDescriber(5)
         
     # Create data directory if it doesn't exist
     if is_agent:
@@ -111,28 +104,34 @@ def main(args: DictConfig) -> None:
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_arrays.append(frame)
         episode_steps = 0
+        action = agent.get_action(state)
+        hx = None
         while True:
             env.render()
+            p_agent_loc = env.agent_pos
+            p_state = env.get_unprocesed_obs()
+            next_state, reward, terminated, truncated, _ = env.step(action)
+            c_agent_loc = env.agent_pos
+            c_state = env.get_unprocesed_obs()
+            transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
+                                                                           agent_curr_pos = c_agent_loc, 
+                                                                           agent_prev_dir = p_state['direction'], 
+                                                                           agent_curr_dir = c_state['direction'], 
+                                                                           prev_view = p_state['image'],
+                                                                           curr_view = c_state['image'],
+                                                                           red_ball_pos = (2,4), 
+                                                                           green_ball_pos = (4,2),
+                                                                           agent_action = action)
             if is_agent:
                 with torch.no_grad():
                     action = agent.get_action(state)
             else:
                 with torch.no_grad():
                     caption = generate_caption(state[:-4].reshape((5,5,3)))
-                    # caption_encoding = sentencebert.encode(caption, convert_to_tensor=True, device=device, show_progress_bar=False)
-                    imagined_state = imagination_net(state)
-                # difference0 = np.argmax(np.abs(imagined_state[0] - state))
-                # difference1 = np.argmax(np.abs(imagined_state[1] - state))
-                # diff_value0 = imagined_state[0][np.argmax(np.abs(imagined_state[0] - state))]
-                # diff_value1 = imagined_state[1][np.argmax(np.abs(imagined_state[1] - state))]
-                _, imagined_inference_out0 = vae(imagined_state[:,0,:])
-                imagined_class_prob0 = torch.exp(imagined_inference_out0['log_c'])
-                _, imagined_inference_out1 = vae(imagined_state[:,1,:])
-                imagined_class_prob1 = torch.exp(imagined_inference_out1['log_c'])
-                imagined_state = imagined_state.squeeze(0).detach().cpu().numpy()
+                    caption_encode = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
+                    imagined_state, hx = imagination_net(torch.tensor(state).unsqueeze(0).unsqueeze(0).float().to(device), caption_encode.unsqueeze(0).unsqueeze(0).to(device))
                 caption = generate_caption(np.round(imagined_state[0][:-4].reshape((5,5,3))))
                 action = agent.get_action(imagined_state[0])
-            next_state, reward, terminated, truncated, _ = env.step(action)
             frame = env.get_frame()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame_arrays.append(frame)

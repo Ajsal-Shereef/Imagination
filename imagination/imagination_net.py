@@ -17,7 +17,9 @@ class ImaginationNet(nn.Module):
                  env,
                  config,
                  num_goals,
-                 agent
+                 agent,
+                 goals,
+                 encoder
                 ):
         """
         Imagination network that accepts a state and outputs N imagined states.
@@ -30,11 +32,9 @@ class ImaginationNet(nn.Module):
         self.env = env
         self.config = config
         self.input_dim = env.observation_space.shape[0]
-        self.sentence_encoder = SentenceTransformer(config.Imagination_General.encoder_model, device=device)
-        #Freezing the encoder weights to prevent updating
-        for params in self.sentence_encoder.parameters():
-            params.requires_grad = False
-        latent_dim = self.sentence_encoder.get_sentence_embedding_dimension()
+        latent_dim = 384
+        self.sentece_encoder = encoder
+        self.goals = goals
         hidden_layers = config.Imagination_Network.hidden_layers
         self.encoder = MLP(input_size = self.input_dim,
                            output_size = config.Imagination_Network.feature_dim,
@@ -88,10 +88,16 @@ class ImaginationNet(nn.Module):
             action_loss = F.mse_loss(imagined_action, agent_action)
             
             # 3. Goal consistency loss
-            caption = self.captioner.generate_description(imagined_states[0,0,0,:], imagined_states[0,0,1,:])
+            stacked_imagined_state = torch.concatenate([imagined_states[:,i,1:,:], imagined_states[:,i,:-1,:]], dim=-1)
+            trajectory_encoding = self.sentece_encoder(stacked_imagined_state.view(-1, stacked_imagined_state.shape[-1]))
+            # trajectory_encoding = trajectory_encoding.view(stacked_imagined_state.shape[0], stacked_imagined_state.shape[1], -1)
+            goal_embedding = self.goals[i]
+            # imagine_state = trajectory_encoding[:,i,...].reshape(-1, trajectory_encoding.shape[-1])
+            cos_sim = F.cosine_similarity(trajectory_encoding, goal_embedding.unsqueeze(0))
+            class_loss += 1-torch.mean(cos_sim)
             # Aggregate losses
-            total_loss += 1.00*cl_loss + 0.50 * prox_loss + 0.50 * action_loss
-            class_loss += cl_loss
+            total_loss += 1.00 * class_loss + 0.50 * prox_loss + 0.50 * action_loss
+            class_loss += class_loss
             policy_loss += action_loss
             proximity_loss += prox_loss
 
@@ -170,7 +176,7 @@ class ImaginationNet(nn.Module):
     #     # Return the average loss across all N imagined states
     #     return total_loss, class_loss, policy_loss, proximity_loss 
         
-    def forward(self, state, caption):
+    def forward(self, state, caption, hx=None):
         """
         Forward pass through the network. Given a state, outputs N imagined states.
         
@@ -187,11 +193,11 @@ class ImaginationNet(nn.Module):
         features = self.encoder(input)
         film_layer_out = self.film_layer(features, caption)
         film_layer_out = film_layer_out.view(b, t, -1)
-        lstm_output, _ = self.lstm(film_layer_out)
+        lstm_output, hx = self.lstm(film_layer_out)
         lstm_output = lstm_output.contiguous().view(b*t, -1)
         differential_state1 = self.fc1(lstm_output)
         differential_state2 = self.fc2(lstm_output)
-        return torch.stack([differential_state1.view(b,t,f) + state, differential_state2.view(b,t,f) + state], dim = 1) #[batch_size, 2, delta_dim]
+        return torch.stack([differential_state1.view(b,t,f) + state, differential_state2.view(b,t,f) + state], dim = 1), hx
     
     def save(self, path):
         """
