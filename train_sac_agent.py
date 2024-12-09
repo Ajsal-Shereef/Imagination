@@ -68,7 +68,7 @@ def train(config):
                                                                            agent_curr_dir = env.get_unprocesed_obs()['direction'], 
                                                                            prev_view = None,
                                                                            curr_view = env.get_unprocesed_obs()['image'],
-                                                                           red_ball_pos = (2,4), 
+                                                                           purple_key_pos = (2,4), 
                                                                            green_ball_pos = (4,2),
                                                                            agent_action = None)
             language.append(transition_caption)
@@ -92,7 +92,7 @@ def train(config):
                                                                                agent_curr_dir = c_state['direction'], 
                                                                                prev_view = p_state['image'],
                                                                                curr_view = c_state['image'],
-                                                                               red_ball_pos = (2,4), 
+                                                                               purple_key_pos = (2,4), 
                                                                                green_ball_pos = (4,2),
                                                                                agent_action = action)
                 # c_frame = env.get_frame()
@@ -118,7 +118,7 @@ def train(config):
                                                                                        agent_curr_dir = c_state['direction'], 
                                                                                        prev_view = p_state['image'],
                                                                                        curr_view = c_state['image'],
-                                                                                       red_ball_pos = (2,4), 
+                                                                                       purple_key_pos = (2,4), 
                                                                                        green_ball_pos = (4,2),
                                                                                        agent_action = action)
                     trajectory_buffer.add(states, captions, language)

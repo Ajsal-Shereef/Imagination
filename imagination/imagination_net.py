@@ -19,7 +19,8 @@ class ImaginationNet(nn.Module):
                  num_goals,
                  agent,
                  goals,
-                 encoder
+                 captioner,
+                 sentence_encoder
                 ):
         """
         Imagination network that accepts a state and outputs N imagined states.
@@ -32,8 +33,9 @@ class ImaginationNet(nn.Module):
         self.env = env
         self.config = config
         self.input_dim = env.observation_space.shape[0]
-        latent_dim = 384
-        self.sentece_encoder = encoder
+        latent_dim = sentence_encoder.get_word_embedding_dimension()
+        self.sentece_encoder = sentence_encoder
+        self.captioner = captioner
         self.goals = goals
         hidden_layers = config.Imagination_Network.hidden_layers
         self.encoder = MLP(input_size = self.input_dim,
@@ -51,7 +53,6 @@ class ImaginationNet(nn.Module):
         self.num_goals = num_goals
         self.ce_loss = nn.CrossEntropyLoss(reduction='mean')
         self.mse_loss = nn.MSELoss(reduction='mean')
-        self.captioner = MiniGridTransitionDescriber(5)
         #Preventing agent to take random action.
         # if config.General.agent == 'dqn':
         #     self.agent.set_episode_step()
@@ -88,12 +89,12 @@ class ImaginationNet(nn.Module):
             action_loss = F.mse_loss(imagined_action, agent_action)
             
             # 3. Goal consistency loss
-            stacked_imagined_state = torch.concatenate([imagined_states[:,i,1:,:], imagined_states[:,i,:-1,:]], dim=-1)
-            trajectory_encoding = self.sentece_encoder(stacked_imagined_state.view(-1, stacked_imagined_state.shape[-1]))
-            # trajectory_encoding = trajectory_encoding.view(stacked_imagined_state.shape[0], stacked_imagined_state.shape[1], -1)
+            stacked_imagined_state = torch.concatenate([imagined_state[:,1:,:], imagined_state[:,:-1,:]], dim=-1)
+            caption = self.captioner.generate(stacked_imagined_state)
+            trajectory_encoding = self.sentece_encoder.encode(caption, convert_to_tensor=True, device=device).view(-1, 20, 384)
             goal_embedding = self.goals[i]
             # imagine_state = trajectory_encoding[:,i,...].reshape(-1, trajectory_encoding.shape[-1])
-            cos_sim = F.cosine_similarity(trajectory_encoding, goal_embedding.unsqueeze(0))
+            cos_sim = F.cosine_similarity(trajectory_encoding, goal_embedding.unsqueeze(0).unsqueeze(0))
             class_loss += 1-torch.mean(cos_sim)
             # Aggregate losses
             total_loss += 1.00 * class_loss + 0.50 * prox_loss + 0.50 * action_loss
@@ -193,7 +194,7 @@ class ImaginationNet(nn.Module):
         features = self.encoder(input)
         film_layer_out = self.film_layer(features, caption)
         film_layer_out = film_layer_out.view(b, t, -1)
-        lstm_output, hx = self.lstm(film_layer_out)
+        lstm_output, hx = self.lstm(film_layer_out, hx)
         lstm_output = lstm_output.contiguous().view(b*t, -1)
         differential_state1 = self.fc1(lstm_output)
         differential_state2 = self.fc2(lstm_output)

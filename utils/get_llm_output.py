@@ -3,4 +3,4 @@ class GetLLMGoals():
         pass
     
     def llmGoals(self, controllable_entities):
-        return ["Pick red ball", "Pick green ball"]
+        return ["Pick purple key", "Pick green ball"]

@@ -98,7 +98,7 @@ def calculate_probabilities(agent_position, observation, agent_direction, red_ba
     object, _ = generate_caption(observation)
     
     # Adjust scores based on distance and facing direction
-    if "red ball" in object:
+    if "purple key" in object:
         score_red = (-distance_red) + (5 if facing_red else 0)
     else:
         score_red = -10
@@ -293,7 +293,7 @@ class MiniGridTransitionDescriber:
         return 2  # Default to two turns if diagonal (e.g., obj is far)
 
     def generate_description(self, agent_prev_pos, agent_curr_pos, agent_prev_dir, agent_curr_dir, 
-                             prev_view, curr_view, red_ball_pos, green_ball_pos, agent_action):
+                             prev_view, curr_view, purple_key_pos, green_ball_pos, agent_action):
         """
         Generate a description of the agent's transition.
 
@@ -304,7 +304,7 @@ class MiniGridTransitionDescriber:
         - agent_curr_dir: Integer representing the agent's current direction.
         - prev_view: Partial view array (view_size x view_size x 3) for the previous frame.
         - curr_view: Partial view array (view_size x view_size x 3) for the current frame.
-        - red_ball_pos: Tuple (x, y) of the red ball's position.
+        - purple_key_pos: Tuple (x, y) of the purple key's position.
         - green_ball_pos: Tuple (x, y) of the green ball's position.
         - agent_action: Integer representing the agent's current action.
 
@@ -323,26 +323,26 @@ class MiniGridTransitionDescriber:
                     obj_words = " ".join([color_name, obj_name])
                     words.append(obj_words)
                 if len(curr_objects) > 1:
-                    red_dist = self.manhattan_distance(agent_curr_pos, red_ball_pos)
+                    purple_dist = self.manhattan_distance(agent_curr_pos, purple_key_pos)
                     green_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
-                    if red_dist == green_dist:
+                    if purple_dist == green_dist:
                         # Calculate turns needed to face each ball
-                        turns_to_red = self.calculate_turns_needed(agent_curr_pos, red_ball_pos, agent_curr_dir)
+                        turns_to_purple = self.calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
                         turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
-                        if turns_to_red < turns_to_green:
-                            return f"The agent sees {', '.join(words)}. Agent is closer to the red ball."
-                        elif turns_to_green < turns_to_red:
-                            return f"The agent sees {', '.join(words)}. Agent is closer to the green ball."
+                        if turns_to_purple < turns_to_green:
+                            return f"the agent sees {', '.join(words)}. agent is closer to the purple key."
+                        elif turns_to_green < turns_to_purple:
+                            return f"the agent sees {', '.join(words)}. agent is closer to the green ball."
                         else:
-                            return f"The agent sees {', '.join(words)}. Agent is equidistant from both balls."
-                    elif red_dist < green_dist:
-                        return f"The agent sees {', '.join(words)}. Agent is closer to the red ball."
+                            return f"the agent sees {', '.join(words)}. agent is equidistant from both objects."
+                    elif purple_dist < green_dist:
+                        return f"the agent sees {', '.join(words)}. agent is closer to the purple key."
                     else:
-                        return f"The agent sees {', '.join(words)}. Agent is closer to the green ball."
+                        return f"the agent sees {', '.join(words)}. agent is closer to the green ball."
                 else:
-                    return f"The agent sees {', '.join(words)}."
+                    return f"the agent sees {', '.join(words)}."
             else:
-                return "No significant change detected."
+                return "no significant change detected."
 
         prev_objects = self.get_objects_in_view(prev_view)
         
@@ -355,37 +355,37 @@ class MiniGridTransitionDescriber:
         # Identify the common objects in both frames
         common_objects = [obj for pos, obj in curr_objects.items() if obj in prev_objects.values()]
 
-        # Check movement description based on Manhattan distance for red and green balls if in view
+        # Check movement description based on Manhattan distance for purple and green balls if in view
         movement_desc = ""
         for obj in common_objects:
-            if obj == ('red', 'ball'):
-                red_prev_dist = self.manhattan_distance(agent_prev_pos, red_ball_pos)
-                red_curr_dist = self.manhattan_distance(agent_curr_pos, red_ball_pos)
-                if red_curr_dist < red_prev_dist:
-                    movement_desc += f"The agent moved towards to the {obj[0]} {obj[1]}. "
+            if obj == ('purple', 'key'):
+                purple_prev_dist = self.manhattan_distance(agent_prev_pos, purple_key_pos)
+                purple_curr_dist = self.manhattan_distance(agent_curr_pos, purple_key_pos)
+                if purple_curr_dist < purple_prev_dist:
+                    movement_desc += f"the agent moved towards to the {obj[0]} {obj[1]}. "
                     agent_moved = True
             elif obj == ('green', 'ball'):
                 green_prev_dist = self.manhattan_distance(agent_prev_pos, green_ball_pos)
                 green_curr_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
                 if green_curr_dist < green_prev_dist:
-                    movement_desc += f"The agent moved towards to the {obj[0]} {obj[1]}. "
+                    movement_desc += f"the agent moved towards to the {obj[0]} {obj[1]}. "
                     agent_moved = True
                     
         if len(common_objects)>1 and agent_moved:
             movement_desc = ""
-            if green_curr_dist>red_curr_dist:
-                movement_desc += f"The agent moved towards to the red ball. "
-            elif green_curr_dist<red_curr_dist:
-                movement_desc += f"The agent moved towards to the green ball. "
-            elif green_curr_dist==red_curr_dist:
-                turns_to_red = self.calculate_turns_needed(agent_curr_pos, red_ball_pos, agent_curr_dir)
+            if green_curr_dist>purple_curr_dist:
+                movement_desc += f"the agent moved towards to the purple key. "
+            elif green_curr_dist<purple_curr_dist:
+                movement_desc += f"the agent moved towards to the green ball. "
+            elif green_curr_dist==purple_curr_dist:
+                turns_to_purple = self.calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
                 turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
-                if turns_to_red < turns_to_green:
-                    movement_desc += "The agent moved towards to the red ball. "
-                elif turns_to_green < turns_to_red:
-                    movement_desc += "The agent moved towards to the green ball. "
+                if turns_to_purple < turns_to_green:
+                    movement_desc += "the agent moved towards to the purple key. "
+                elif turns_to_green < turns_to_purple:
+                    movement_desc += "the agent moved towards to the green ball. "
                 else:
-                    movement_desc += "The agent moved equally towards red and green ball "
+                    movement_desc += "the agent moved equally towards both objects "
                     
         # Describe objects that disappeared from the view
         disappearance_desc = ""
@@ -393,42 +393,44 @@ class MiniGridTransitionDescriber:
         if disappeared_objects:
             for color_name, obj_name in disappeared_objects:
                 if agent_action == 3:
-                    disappearance_desc += f"The agent picked the {color_name} {obj_name}. "
-                else:
-                    obj_words = " ".join([color_name, obj_name])
-                    words.append(obj_words)
-            if words:
-                disappearance_desc += f"The agent ignored {', '.join(words)}. "
+                    disappearance_desc += f"the agent picked the {color_name} {obj_name}. "
+                # else:
+                #     obj_words = " ".join([color_name, obj_name])
+                #     words.append(obj_words)
+            # if words:
+            #     disappearance_desc += f"the agent ignored {', '.join(words)}. "
                 
         # Describe objects that appeared in the view
-        appearance_desc = ""
-        words = []
-        if appeared_objects:
-            for color_name, obj_name in appeared_objects:
-                obj_words = " ".join([color_name, obj_name])
-                words.append(obj_words)
-            if len(curr_objects) > 1:
-                red_dist = self.manhattan_distance(agent_curr_pos, red_ball_pos)
-                green_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
-                if red_dist < green_dist:
-                    appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is closer to the red ball."
-                elif red_dist > green_dist:
-                    appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is closer to the green ball."
-                else:
-                    turns_to_red = self.calculate_turns_needed(agent_curr_pos, red_ball_pos, agent_curr_dir)
-                    turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
-                    if turns_to_red < turns_to_green:
-                        appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is closer to the red ball."
-                    elif turns_to_green < turns_to_red:
-                        appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is closer to the green ball."
-                    else:
-                        appearance_desc += f"The {', '.join(words)} appeared in the current view. Agent is equidistant from both balls."
-            else:
-                appearance_desc += f"The {', '.join(words)} appeared in the current view."
+        # appearance_desc = ""
+        # words = []
+        # if appeared_objects:
+        #     for color_name, obj_name in appeared_objects:
+        #         obj_words = " ".join([color_name, obj_name])
+        #         words.append(obj_words)
+        #     if len(curr_objects) > 1:
+        #         purple_dist = self.manhattan_distance(agent_curr_pos, purple_key_pos)
+        #         green_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
+        #         if purple_dist < green_dist:
+        #             appearance_desc += f"the {', '.join(words)} appeared in the current view, agent is closer to the purple key."
+        #         elif purple_dist > green_dist:
+        #             appearance_desc += f"the {', '.join(words)} appeared in the current view, agent is closer to the green ball."
+        #         else:
+        #             turns_to_purple = self.calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
+        #             turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
+        #             if turns_to_purple < turns_to_green:
+        #                 appearance_desc += f"the {', '.join(words)} appeared in the current view, agent is closer to the purple key."
+        #             elif turns_to_green < turns_to_purple:
+        #                 appearance_desc += f"the {', '.join(words)} appeared in the current view, agent is closer to the green ball."
+        #             else:
+        #                 appearance_desc += f"the {', '.join(words)} appeared in the current view, agent is equidistant from both objects."
+        #     else:
+        #         appearance_desc += f"the {', '.join(words)} appeared in the current view."
 
         # Combine all parts into a single description
-        return (movement_desc + appearance_desc + disappearance_desc).strip() if (
-            movement_desc or appearance_desc or disappearance_desc) else "No significant change detected."
+        # return (movement_desc + appearance_desc + disappearance_desc).strip()  if (
+        #     movement_desc or appearance_desc or disappearance_desc)  else "no significant change detected"
+        return (movement_desc + disappearance_desc).strip()  if (
+            movement_desc or disappearance_desc)  else "no significant change detected"
 
 
 class DoorKeyPickup(MiniGridEnv):
@@ -540,12 +542,12 @@ class SimplePickup(MiniGridEnv):
         self.grid.set(4, 2, Ball(color='green'))
         
         # # # Place a ball square in the bottom-right corner
-        self.grid.set(2, 4, Ball(color='red'))
+        self.grid.set(2, 4, Key(color='purple'))
         
         # Place one green ball at a random position
         # self.green_ball_loc = self.place_obj(Ball('green'), max_tries=100)
 
-        # Place one red ball at a random position
+        # Place one purple key at a random position
         # self.red_ball_loc = self.place_obj(Ball('red'), max_tries=100)
 
         # Place the agent

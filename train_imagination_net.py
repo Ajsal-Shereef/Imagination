@@ -10,9 +10,9 @@ from dqn.dqn import DQNAgent
 from sac_agent.agent import SAC
 from partedvae.models import VAE
 from torch.utils.data import DataLoader
-from train_captioner import SurrogateModel
 from omegaconf import DictConfig, OmegaConf
 from utils.get_llm_output import GetLLMGoals
+from train_captioner import FeatureToTextModel
 from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 
@@ -24,7 +24,8 @@ def train_imagination_net(config,
                           dataloader, 
                           checkpoint_interval, 
                           checkpoint_dir,
-                          encoder,
+                          sentence_encoder,
+                          captioner,
                           goals,
                           num_goals):
     imagination_net = ImaginationNet(env = env,
@@ -32,8 +33,9 @@ def train_imagination_net(config,
                                      num_goals = num_goals,
                                      agent = agent,
                                      goals= goals,
-                                     encoder = encoder).to(device)
-    wandb.watch(imagination_net)
+                                     captioner = captioner,
+                                     sentence_encoder = sentence_encoder).to(device)
+    # wandb.watch(imagination_net)
     #Creating the optimizer
     optimizer = optim.Adam(imagination_net.parameters(), lr=config['lr'])
     # nn_utils.clip_grad_norm_(imagination_net.parameters(), max_norm=config['max_gradient'])
@@ -78,7 +80,7 @@ def train_imagination_net(config,
 @hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     # Log the configuration
-    wandb.config.update(OmegaConf.to_container(args, resolve=True))
+    # wandb.config.update(OmegaConf.to_container(args, resolve=True))
     #Loading the dataset
     dataset = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/states.pkl')
     captions = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/caption_encode.pkl')
@@ -113,10 +115,13 @@ def main(args: DictConfig) -> None:
     for params in agent.parameters():
         params.requires_grad = False
         
-    encoder = SurrogateModel(2*env.observation_space.shape[0], 384)
-    encoder.load_params(args.Imagination_General.sentece_encoder_model)
+    captioner = FeatureToTextModel(feature_dim=2*env.observation_space.shape[0], 
+                                   max_timesteps=args.Imagination_General.max_ep_len, 
+                                   input_size=args.Imagination_General.captioner_hidden_dim)
+    captioner.to(device)
+    captioner.load_state_dict(torch.load(args.Imagination_General.captioner_path, map_location=device))
     
-    for params in encoder.parameters():
+    for params in captioner.parameters():
         params.requires_grad = False
     
     # Create data directory if it doesn't exist
@@ -130,11 +135,12 @@ def main(args: DictConfig) -> None:
                           dataloader = dataloader, 
                           checkpoint_interval = args.Imagination_Network.checkpoint_interval, 
                           checkpoint_dir = model_dir,
-                          encoder = encoder,
+                          sentence_encoder = sentenceEncoder,
+                          captioner = captioner,
                           goals = goals_encoded,
                           num_goals = args.Imagination_General.num_goals)
     
 if __name__ == "__main__":
-    wandb.init(project="Imagination-net_training")
+    # wandb.init(project="Imagination-net_training")
     main()
     
