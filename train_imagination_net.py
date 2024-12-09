@@ -12,7 +12,7 @@ from partedvae.models import VAE
 from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
 from utils.get_llm_output import GetLLMGoals
-from train_captioner import FeatureToTextModel
+from train_captioner import FeatureToEmbeddingModel
 from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 
@@ -33,7 +33,7 @@ def train_imagination_net(config,
                                      num_goals = num_goals,
                                      agent = agent,
                                      goals= goals,
-                                     captioner = captioner,
+                                     approx_embed_model = captioner,
                                      sentence_encoder = sentence_encoder).to(device)
     # wandb.watch(imagination_net)
     #Creating the optimizer
@@ -45,14 +45,17 @@ def train_imagination_net(config,
         total_class_loss = 0
         total_policy_loss = 0
         total_proximity_loss = 0
-        for data, caption in dataloader:
-            data = data.float().to(device)
+        previous_imagined_state = None
+        for state, next_state, caption in dataloader:
+            state = state.float().to(device)
+            next_state = next_state.float().to(device)
             caption = caption.float().to(device)
             optimizer.zero_grad()
-            imagined_state, hx = imagination_net(data, caption)
-            loss, class_loss, policy_loss, proximity_loss  = imagination_net.compute_loss(data, imagined_state)
+            imagined_state = imagination_net(state, next_state, caption)
+            loss, class_loss, policy_loss, proximity_loss  = imagination_net.compute_loss(state, previous_imagined_state, imagined_state)
             loss.backward()
             optimizer.step()
+            previous_imagined_state = imagined_state
             # Accumulate losses
             total_loss += loss.item()
             total_class_loss += class_loss.item()
@@ -82,10 +85,11 @@ def main(args: DictConfig) -> None:
     # Log the configuration
     # wandb.config.update(OmegaConf.to_container(args, resolve=True))
     #Loading the dataset
-    dataset = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/states.pkl')
-    captions = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/caption_encode.pkl')
+    states = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/states.pkl')
+    next_states = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/next_states.pkl')
+    captions = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/caption_encoded.pkl')
     # Initialize dataset and dataloader
-    dataset = TwoListDataset(dataset, captions)
+    dataset = ThreeListDataset(states, next_states, captions)
     dataloader = DataLoader(dataset, batch_size=args.Imagination_Network.batch_size, shuffle=True)
     if args.General.env ==  "SimplePickup":
         from env.env import SimplePickup
@@ -115,9 +119,8 @@ def main(args: DictConfig) -> None:
     for params in agent.parameters():
         params.requires_grad = False
         
-    captioner = FeatureToTextModel(feature_dim=2*env.observation_space.shape[0], 
-                                   max_timesteps=args.Imagination_General.max_ep_len, 
-                                   input_size=args.Imagination_General.captioner_hidden_dim)
+    captioner = FeatureToEmbeddingModel(feature_dim=2*env.observation_space.shape[0], 
+                                        latent_dim = sentenceEncoder.get_sentence_embedding_dimension())
     captioner.to(device)
     captioner.load_state_dict(torch.load(args.Imagination_General.captioner_path, map_location=device))
     

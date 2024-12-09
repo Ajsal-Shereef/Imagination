@@ -110,6 +110,18 @@ class TwoListDataset(Dataset):
     def __getitem__(self, idx):
         return self.list1[idx], self.list2[idx]
     
+class ThreeListDataset(Dataset):
+    def __init__(self, list1, list2, list3):
+        self.list1 = list1
+        self.list2 = list2
+        self.list3 = list3
+    
+    def __len__(self):
+        return len(self.list1)  # Assume both lists are of the same length
+    
+    def __getitem__(self, idx):
+        return self.list1[idx], self.list2[idx], self.list3[idx]
+    
 def normalize_data(data):
     """
     Normalize the data using Z-score normalization (mean = 0, std = 1).

@@ -86,3 +86,42 @@ class TrajectoryReplyBuffer:
     def sample(self, batch_size):
         indices = np.random.choice(range(self.buffer_size), size = batch_size)
         return (self.states_buffer[indices, :, :], self.caption_buffer[indices, :, :], indices)
+    
+class StateCaptionEncodeBuffer():
+    """Buffer to store the states and encoded captions"""
+    def __init__(self, buffer_size, device):
+        """Initialize a ReplayBuffer object.
+        Params
+        ======
+            buffer_size (int): maximum size of buffer
+            batch_size (int): size of each training batch
+            seed (int): random seed
+        """
+        self.device = device
+        self.states = []
+        self.next_states = []
+        self.caption_encoded = []
+            
+    def add(self, state, next_state, caption_encode):
+        """Add a new experience to memory."""
+        self.states.append(state)
+        self.next_states.append(next_state)
+        self.caption_encoded.append(caption_encode)
+        
+    def dump_buffer_data(self, dump_dir):
+        
+        data_path = os.path.join(dump_dir, 'states.pkl')
+        with open(data_path, "wb") as file:
+            pickle.dump(self.states, file)
+            
+        data_path = os.path.join(dump_dir, 'next_states.pkl')
+        with open(data_path, "wb") as file:
+            pickle.dump(self.next_states, file)
+            
+        data_path = os.path.join(dump_dir, 'caption_encoded.pkl')
+        with open(data_path, "wb") as file:
+            pickle.dump(self.caption_encoded, file)
+    
+    def __len__(self):
+        """Return the current size of internal memory."""
+        return len(self.memory)

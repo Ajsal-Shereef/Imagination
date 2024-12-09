@@ -19,5 +19,4 @@ Imagination_Network:
   epoch : 5000
   max_gradient : 10
   checkpoint_interval : 200
-  feature_dim : 64
-  lstm_hidden_size : 512
+  output_dim : 384
