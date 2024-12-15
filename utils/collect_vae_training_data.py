@@ -223,14 +223,20 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
                                                                        agent_curr_dir = env.get_unprocesed_obs()['direction'], 
                                                                        prev_view = None,
                                                                        curr_view = env.get_unprocesed_obs()['image'],
-                                                                       red_ball_pos = (2,4), 
+                                                                       purple_key_pos = (2,4), 
                                                                        green_ball_pos = (4,2),
                                                                        agent_action = None)
         caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
         captions.append(caption_encoding)
         # caption = state_captioner.generate_caption(state)
         # state = preprocess_observation(state)
+        prob = calculate_probabilities(env.agent_pos, 
+                                           env.get_unprocesed_obs()['image'], 
+                                           env.get_unprocesed_obs()['direction'], 
+                                           (2,4), 
+                                           (4,2))
         data.append(state)
+        class_prob.append(prob)
         
         done = False
         step = 0
@@ -249,13 +255,6 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             
             p_state = env.get_unprocesed_obs()
             obj, caption = generate_caption(p_state['image'])
-            prob = calculate_probabilities(env.agent_pos, 
-                                       env.get_unprocesed_obs()['image'], 
-                                       env.get_unprocesed_obs()['direction'], 
-                                       (2,4), 
-                                       (4,2))
-            class_prob.append(prob)
-            
             next_state, reward, terminated, truncated, info = env.step(action)
 
             c_state = env.get_unprocesed_obs()
@@ -271,24 +270,22 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
                                                                            agent_curr_dir = c_state['direction'], 
                                                                            prev_view = p_state['image'],
                                                                            curr_view = c_state['image'],
-                                                                           red_ball_pos = (2,4), 
+                                                                           purple_key_pos = (2,4), 
                                                                            green_ball_pos = (4,2),
                                                                            agent_action = action)
-            
-            prob = calculate_probabilities(env.agent_pos, 
-                                           env.get_unprocesed_obs()['image'], 
-                                           env.get_unprocesed_obs()['direction'], 
-                                           (2,4),
-                                           (4,2))
-            class_prob.append(prob)
             done = terminated + truncated
             # obj, caption = generate_caption(c_state['image'])
             caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
             captions.append(caption_encoding)
             # next_state = preprocess_observation(next_state)
             # Store the transition
+            prob = calculate_probabilities(env.agent_pos, 
+                                           env.get_unprocesed_obs()['image'], 
+                                           env.get_unprocesed_obs()['direction'], 
+                                           (2,4), 
+                                           (4,2))
             data.append(next_state)
-            
+            class_prob.append(prob)
             state = next_state
             p_state = c_state
             step += 1

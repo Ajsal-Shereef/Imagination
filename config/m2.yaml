@@ -1,0 +1,13 @@
+M2_General:
+  env : "SimplePickup"
+  load_model_path : 'models/'
+  datapath : "data"
+  num_goals : 2
+M2_Network:
+  input_dim : 79
+  encoder_hidden_dim : [512]
+  latent_dim : 8
+  decoder_hidden_dim : [512]
+  epochs : 3000
+  batch_size : 64
+  lr_model : 3e-4
