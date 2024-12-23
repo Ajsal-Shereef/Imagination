@@ -80,13 +80,13 @@ def parse_arguments():
     parser.add_argument(
         '--episodes',
         type=int,
-        default=200,
+        default=6000,
         help='Number of episodes to run for data collection (default: 100)'
     )
     parser.add_argument(
         '--max-steps',
         type=int,
-        default=100,
+        default=20,
         help='Maximum steps per episode (default: 100)'
     )
     
@@ -217,24 +217,24 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
         # frame = env.get_frame()
         # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         # cv2.imwrite("previous_frame.png", frame)
-        transition_caption = transition_captioner.generate_description(agent_prev_pos = None, 
-                                                                       agent_curr_pos = c_agent_loc, 
-                                                                       agent_prev_dir = None, 
-                                                                       agent_curr_dir = env.get_unprocesed_obs()['direction'], 
-                                                                       prev_view = None,
-                                                                       curr_view = env.get_unprocesed_obs()['image'],
-                                                                       purple_key_pos = (2,4), 
-                                                                       green_ball_pos = (4,2),
-                                                                       agent_action = None)
-        caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
-        captions.append(caption_encoding)
+        # transition_caption = transition_captioner.generate_description(agent_prev_pos = None, 
+        #                                                                agent_curr_pos = c_agent_loc, 
+        #                                                                agent_prev_dir = None, 
+        #                                                                agent_curr_dir = env.get_unprocesed_obs()['direction'], 
+        #                                                                prev_view = None,
+        #                                                                curr_view = env.get_unprocesed_obs()['image'],
+        #                                                                purple_key_pos = env.purple_key_loc, 
+        #                                                                green_ball_pos = env.green_ball_loc,
+        #                                                                agent_action = None)
+        # caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
+        # captions.append(caption_encoding)
         # caption = state_captioner.generate_caption(state)
         # state = preprocess_observation(state)
         prob = calculate_probabilities(env.agent_pos, 
                                            env.get_unprocesed_obs()['image'], 
                                            env.get_unprocesed_obs()['direction'], 
-                                           (2,4), 
-                                           (4,2))
+                                           env.purple_key_loc, 
+                                           env.green_ball_loc)
         data.append(state)
         class_prob.append(prob)
         
@@ -264,26 +264,29 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             # cv2.imwrite("frame.png", c_frame)
             
             c_agent_loc = env.agent_pos
-            transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
-                                                                           agent_curr_pos = c_agent_loc, 
-                                                                           agent_prev_dir = p_state['direction'], 
-                                                                           agent_curr_dir = c_state['direction'], 
-                                                                           prev_view = p_state['image'],
-                                                                           curr_view = c_state['image'],
-                                                                           purple_key_pos = (2,4), 
-                                                                           green_ball_pos = (4,2),
-                                                                           agent_action = action)
+            # transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
+            #                                                                agent_curr_pos = c_agent_loc, 
+            #                                                                agent_prev_dir = p_state['direction'], 
+            #                                                                agent_curr_dir = c_state['direction'], 
+            #                                                                prev_view = p_state['image'],
+            #                                                                curr_view = c_state['image'],
+            #                                                                purple_key_pos = (2,4), 
+            #                                                                green_ball_pos = (4,2),
+            #                                                                agent_action = action)
             done = terminated + truncated
-            # obj, caption = generate_caption(c_state['image'])
-            caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
-            captions.append(caption_encoding)
+            # # obj, caption = generate_caption(c_state['image'])
+            # caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
+            # captions.append(caption_encoding)
             # next_state = preprocess_observation(next_state)
             # Store the transition
+            # frame = env.get_frame()
+            # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            # cv2.imwrite("frame.png", frame)
             prob = calculate_probabilities(env.agent_pos, 
                                            env.get_unprocesed_obs()['image'], 
                                            env.get_unprocesed_obs()['direction'], 
-                                           (2,4), 
-                                           (4,2))
+                                           env.purple_key_loc, 
+                                           env.green_ball_loc)
             data.append(next_state)
             class_prob.append(prob)
             state = next_state

@@ -51,10 +51,13 @@ class Encoder(nn.Module):
 
         self.hidden = nn.ModuleList(linear_layers)
         self.sample = sample_layer(h_dim[-1], z_dim)
+        
 
     def forward(self, x):
         for layer in self.hidden:
             x = F.relu(layer(x))
+        # if not self.training:
+        #     self.sample.training = False
         return self.sample(x)
 
 
@@ -81,12 +84,12 @@ class Decoder(nn.Module):
 
         self.reconstruction = nn.Linear(h_dim[-1], x_dim)
 
-        # self.output_activation = nn.Sigmoid()
+        self.output_activation = nn.ReLU()
 
     def forward(self, x):
         for layer in self.hidden:
             x = F.relu(layer(x))
-        return self.reconstruction(x)
+        return self.output_activation(self.reconstruction(x))
 
 
 class VariationalAutoencoder(nn.Module):

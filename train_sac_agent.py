@@ -14,7 +14,7 @@ def get_config():
     parser = argparse.ArgumentParser(description='RL')
     parser.add_argument("--run_name", type=str, default="Training SAC agents", help="Run name, default: SAC")
     parser.add_argument("--env", type=str, default="SimplePickup", help="Gym environment name, default: CartPole-v0")
-    parser.add_argument("--episodes", type=int, default=100, help="Number of episodes, default: 100")
+    parser.add_argument("--episodes", type=int, default=6000, help="Number of episodes, default: 100")
     parser.add_argument("--max_ep_len", type=int, default=20, help="Number of timestep within an episode")
     parser.add_argument("--buffer_size", type=int, default=1000_00, help="Maximal training dataset size, default: 100_000")
     parser.add_argument("--seed", type=int, default=1, help="Seed, default: 1")
@@ -63,8 +63,8 @@ def train(config):
                                                                            agent_curr_dir = env.get_unprocesed_obs()['direction'], 
                                                                            prev_view = None,
                                                                            curr_view = env.get_unprocesed_obs()['image'],
-                                                                           purple_key_pos = (2,4), 
-                                                                           green_ball_pos = (4,2),
+                                                                           purple_key_pos = env.purple_key_loc, 
+                                                                           green_ball_pos = env.green_ball_loc,
                                                                            agent_action = None)
             caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
             episode_steps = 0
@@ -83,8 +83,8 @@ def train(config):
                                                                                agent_curr_dir = c_state['direction'], 
                                                                                prev_view = p_state['image'],
                                                                                curr_view = c_state['image'],
-                                                                               purple_key_pos = (2,4), 
-                                                                               green_ball_pos = (4,2),
+                                                                               purple_key_pos = env.purple_key_loc, 
+                                                                               green_ball_pos = env.green_ball_loc,
                                                                                agent_action = action)
                 # c_frame = env.get_frame()
                 # c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)

@@ -1,9 +1,11 @@
 Imagination_General:
   env : "SimplePickup"
+  agent_view_size : 3
+  size: 15
   max_ep_len : 20
   encoder_model : "all-MiniLM-L12-v2"
   datapath : "data"
-  vae_checkpoint : "models/parted_vae/parted_vae_15000.pth"
+  vae_checkpoint : "models/m2_vae/m2_vae.pth"
   sentece_encoder_model : "models/captioner.pth"
   buffer_size : 3000_00
   agent : 'sac'
@@ -11,7 +13,7 @@ Imagination_General:
   num_goals : 2
   captioner_hidden_dim : 768
   captioner_path : "models/captioner.pth"
-
+  centroid_Path : "models/m2_vae/gmm_vae_cluster_mapping.json"
 Imagination_Network:
   lr : 0.0001
   batch_size: 500

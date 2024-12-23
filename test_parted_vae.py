@@ -2,15 +2,18 @@ import os
 import hydra
 
 from utils.utils import *
+from sac_agent.agent import SAC
 from partedvae.models import VAE
 from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
+from imagination.imagination_net import ImaginationNet
 from architectures.m2_vae.dgm import DeepGenerativeModel
 from utils.collect_vae_training_data import collect_data
 
+
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
+def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """
     Visualize the latent space using PCA or t-SNE.
 
@@ -26,15 +29,28 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
         all_z = []
         all_labels = []
         true_labels = []
+        imagined_state_0_pred = []
+        imagined_state_1_pred = []
+        imagined_z_0 = []
+        imagined_z_1 = []
         with torch.no_grad():
             for data, true_label in tqdm(dataloader, desc="Collecting Latent Vectors"):
                 # sentences = list(sentences)
                 data = data.float().to(device)
+                
+                #Invoking imagined_state
+                imagined_state = imagination_net(data)
+                _, img_0_z, _, _, imagined_state_0_label = model(imagined_state[:,0,:])
+                _, img_1_z, _, _, imagined_state_1_label = model(imagined_state[:,1,:])
+                imagined_z_0.append(img_0_z.detach().cpu().numpy())
+                imagined_z_1.append(img_1_z.detach().cpu().numpy())
+                imagined_state_0_pred.append(imagined_state_0_label.detach().cpu().numpy())
+                imagined_state_1_pred.append(imagined_state_1_label.detach().cpu().numpy())
+                
                 true_label = true_label.float().to(device)
                 true_labels.append(true_label.detach().cpu().numpy())
                 # Forward pass
-                x_mu, z, z_mu, z_log_var = model(data, true_label)
-                labels = model.classify(data)
+                x_mu, z, z_mu, z_log_var, labels = model(data)
                 latent = z
                 all_z.append(latent.detach().cpu().numpy())
                 all_labels.append(labels.detach().cpu().numpy())
@@ -42,6 +58,10 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
         all_z = np.concatenate(all_z, axis=0)  # [num_samples, latent_dim]
         all_labels = np.concatenate(all_labels, axis=0)
         true_labels = np.concatenate(true_labels, axis=0)
+        imagined_state_0_pred = np.concatenate(imagined_state_0_pred, axis=0)
+        imagined_state_1_pred = np.concatenate(imagined_state_1_pred, axis=0)
+        imagined_z_0 = np.concatenate(imagined_z_0, axis=0)
+        imagined_z_1 = np.concatenate(imagined_z_1, axis=0)
         
     fig_save_name = f'{save_path}/latent_space_.png'
     true_fig_save_name = f'{save_path}/latent_space_true_label.png'
@@ -90,32 +110,99 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
     plt.savefig(true_fig_save_name)
     plt.close()
     
+    if method == 'pca':
+        reducer = PCA(n_components=2)
+        reduced_z = reducer.fit_transform(imagined_z_0)
+        fig_save_name = f'{save_path}/latent_space_pca_imagined_0.png'
+    elif method == 'tsne':
+        reducer = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
+        reduced_z = reducer.fit_transform(all_z)
+        fig_save_name = f'{save_path}/latent_space_tsne.png'
+    else:
+        raise ValueError("Method must be 'pca' or 'tsne'.")
+    
+    plt.scatter(reduced_z[:,0], reduced_z[:,1], c=imagined_state_0_pred[:,1], cmap='coolwarm', edgecolor='k', alpha=0.7)
+    plt.colorbar(label='Predicted probability of Class 1')
+    plt.xlabel("X-axis")
+    plt.ylabel("Y-axis")
+    plt.title("Class latent")
+    plt.savefig(fig_save_name)
+    plt.close()
+    
+    if method == 'pca':
+        reducer = PCA(n_components=2)
+        reduced_z = reducer.fit_transform(imagined_z_1)
+        fig_save_name = f'{save_path}/latent_space_pca_imagined_1.png'
+    elif method == 'tsne':
+        reducer = TSNE(n_components=2, verbose=1, perplexity=40, n_iter=300)
+        reduced_z = reducer.fit_transform(all_z)
+        fig_save_name = f'{save_path}/latent_space_tsne.png'
+    else:
+        raise ValueError("Method must be 'pca' or 'tsne'.")
+    
+    plt.scatter(reduced_z[:,0], reduced_z[:,1], c=imagined_state_1_pred[:,1], cmap='coolwarm', edgecolor='k', alpha=0.7)
+    plt.colorbar(label='Predicted probability of Class 1')
+    plt.xlabel("X-axis")
+    plt.ylabel("Y-axis")
+    plt.title("Class latent")
+    plt.savefig(fig_save_name)
+    plt.close()
+    
     
     print(f"Latent space visualization saved to {fig_save_name}")
     return all_z, all_labels
 
-@hydra.main(version_base=None, config_path="config", config_name="m2")
+@hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     #Loading the dataset
     if args.M2_General.env == "SimplePickup":
         from env.env import SimplePickup #TransitionCaptioner
         env = SimplePickup(max_steps=20, agent_view_size=5, size=7)
         
-    datasets, _, class_probs = collect_data(env, True, 100, 20, device)
+    # datasets, _, class_probs = collect_data(env, True, 2000, 20, device)
+    
+    #Loading the dataset
+    datasets = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/data.pkl')
+    # captions = get_data(f'{args.General.datapath}/{args.General.env}/captions.pkl')
+    class_probs = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/class_prob.pkl')
     
     # Initialize dataset and dataloader
     dataloader = TwoListDataset(datasets, class_probs)
     train_loader = DataLoader(dataloader, batch_size=900, shuffle=True)
+    
+    if args.Imagination_General.agent == 'dqn':
+        agent = DQNAgent(env, 
+                        args.General, 
+                        args.policy_config, 
+                        args.policy_network_cfg, 
+                        args.policy_network_cfg, '')
+    else:
+        agent = SAC(args,
+                    state_size = env.observation_space.shape[0],
+                    action_size = env.action_space.n,
+                    device=device,
+                    buffer_size = args.Imagination_General.buffer_size)
+    #Loading the pretrained weight of sac agent.
+    agent.load_params(args.Imagination_General.agent_checkpoint)
     
     model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim, args.M2_Network.encoder_hidden_dim]).to(device)
     model.load("models/m2_vae/m2_vae.pth")
     model.to(device)
     model.eval()
     
+    imagination_net = ImaginationNet(env = env,
+                                     config = args,
+                                     num_goals = args.Imagination_General.num_goals,
+                                     agent = agent,
+                                     vae = model).to(device)
+        
+    imagination_net.load("models/imagination_net/imagination_net_epoch_1000.tar")
+    imagination_net.eval()
+    
     # Visualization of the latent space 
     data_dir = f'visualizations/m2_vae'
     os.makedirs(data_dir, exist_ok=True)
-    latent, labels = visualize_latent_space(model, train_loader, device, method='pca', save_path=data_dir)
+    latent, labels = visualize_latent_space(model, imagination_net, train_loader, device, method='pca', save_path=data_dir)
     # latent = visualize_latent_space(model, dataloader, device, latent, labels, method='tsne', save_path=data_dir)
     
 if __name__ == "__main__":

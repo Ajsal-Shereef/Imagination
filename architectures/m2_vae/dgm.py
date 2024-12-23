@@ -43,9 +43,9 @@ class DeepGenerativeModel(VariationalAutoencoder):
         [x_dim, self.y_dim, z_dim, h_dim] = dims
         super(DeepGenerativeModel, self).__init__([x_dim, z_dim, h_dim])
 
-        self.encoder = Encoder([x_dim + self.y_dim, h_dim, z_dim])
+        self.encoder = Encoder([x_dim, h_dim, z_dim])
         self.decoder = Decoder([z_dim + self.y_dim, list(reversed(h_dim)), x_dim])
-        self.classifier = Classifier([x_dim, h_dim[0], self.y_dim])
+        self.classifier = Classifier([z_dim, h_dim[0], self.y_dim])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -53,13 +53,15 @@ class DeepGenerativeModel(VariationalAutoencoder):
                 if m.bias is not None:
                     m.bias.data.zero_()
 
-    def forward(self, x, y):
+    def forward(self, x, y=None):
         # Add label and data and generate latent variable
-        z, z_mu, z_log_var = self.encoder(torch.cat([x, y], dim=1))
+        z, z_mu, z_log_var = self.encoder(x)
+        if y is None:
+            y = self.classify(z)
         # Reconstruct data point from latent data and label
-        x_mu = self.decoder(torch.cat([z, y], dim=1))
+        x_mu = self.decoder(torch.cat([z, y], dim=-1))
 
-        return x_mu, z, z_mu, z_log_var
+        return x_mu, z, z_mu, z_log_var, y
 
     def classify(self, x):
         logits = self.classifier(x)
@@ -82,8 +84,11 @@ class DeepGenerativeModel(VariationalAutoencoder):
         # loglik = -F.binary_cross_entropy(recon_x, x, reduction='sum')/n
         loglik = -F.mse_loss(recon_x, x, reduction='sum')/n
         KLD = -0.5*(d + (logvar-logvar.exp()).sum()/n - mu.pow(2).sum()/n)
-        loglik_y = torch.log(y).sum()/n #Human label is assumed to a probabilistic measure
+        # loglik_y = torch.log(y).sum()/n #Human label is assumed to a probabilistic measure
         # loglik_y = -log_standard_categorical(y).sum()/n
+        pred_label = self.classifier(mu)
+        # loglik_y = -F.binary_cross_entropy(pred_label, y, reduction='sum')/n
+        loglik_y = -torch.mean((y * pred_label).sum(dim=1))
 
         return loglik + loglik_y - KLD
 
@@ -102,8 +107,8 @@ class DeepGenerativeModel(VariationalAutoencoder):
         KLD = -0.5*(1 + (logvar-logvar.exp()) - mu.pow(2)) #n*1
         KLD = torch.sum(KLD, dim=-1).sum(-1)/n
 
-        y = torch.ones(prob.shape[-1])
-        y = F.softmax(y)
+        y = torch.ones_like(prob)
+        y = F.softmax(y, dim=-1)
 
         loglik_y = torch.log(y).to(device)  #constant, value same for all y since we have a uniform prior
         #q(y|x)*prior

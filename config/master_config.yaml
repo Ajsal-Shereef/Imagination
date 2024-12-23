@@ -1,4 +1,5 @@
   defaults:
+    - m2
     - parted_vae
     - dqn
     - sacd

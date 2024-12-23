@@ -78,13 +78,30 @@ def generate_caption(observation):
         caption = f"You see {objects_seen} and you are close to {closest_desc}."
     return objects_seen, caption
 
-def calculate_probabilities(agent_position, observation, agent_direction, red_ball_position, green_ball_position):
+def calculate_turns_needed(agent_pos, obj_pos, agent_dir):
+    """Calculate turns needed for the agent to face an object."""
+    relative_position = (obj_pos[0] - agent_pos[0], obj_pos[1] - agent_pos[1])
+    normalized_arr = relative_position / np.max(np.abs(relative_position))
+    if np.array_equal(normalized_arr, DIR_TO_VEC[agent_dir]):  # Already aligned
+        return 0
+    for turns, direction in enumerate(DIR_TO_VEC, start=1):
+        if np.array_equal(direction, normalized_arr):
+            return min(turns, 5 - turns)  # Min turns in either direction
+    return 2  # Default to two turns if diagonal (e.g., obj is far)
+
+def calculate_probabilities(agent_position, observation, agent_direction, purple_key_position, green_ball_position):
     # Get direction vector using DIR_TO_VEC
     direction_vector = DIR_TO_VEC[agent_direction]
     
     # Calculate Manhattan distances to each ball
-    distance_red = abs(agent_position[0] - red_ball_position[0]) + abs(agent_position[1] - red_ball_position[1])
+    distance_purple = abs(agent_position[0] - purple_key_position[0]) + abs(agent_position[1] - purple_key_position[1])
     distance_green = abs(agent_position[0] - green_ball_position[0]) + abs(agent_position[1] - green_ball_position[1])
+    
+    turns_to_purple = calculate_turns_needed(agent_position, purple_key_position, agent_direction)
+    turns_to_green = calculate_turns_needed(agent_position, green_ball_position, agent_direction)
+    
+    distance_purple += turns_to_purple
+    distance_green += turns_to_green
     
     # Check if the agent is directly facing each ball
     def is_facing(agent_pos, agent_dir_vector, obj_pos):
@@ -92,23 +109,23 @@ def calculate_probabilities(agent_position, observation, agent_direction, red_ba
         return (delta_x, delta_y) == tuple(agent_dir_vector)
     
 
-    facing_red = is_facing(agent_position, direction_vector, red_ball_position)
+    facing_purple = is_facing(agent_position, direction_vector, purple_key_position)
     facing_green = is_facing(agent_position, direction_vector, green_ball_position)
         
     object, _ = generate_caption(observation)
     
     # Adjust scores based on distance and facing direction
     if "purple key" in object:
-        score_red = (-distance_red) + (5 if facing_red else 0)
+        score_purple = (-distance_purple) + (0 if facing_purple else 0)
     else:
-        score_red = -10
+        score_purple = -100
     if "green ball" in object:
-        score_green = (-distance_green) + (5 if facing_green else 0)
+        score_green = (-distance_green) + (0 if facing_green else 0)
     else:
-        score_green = -10
+        score_green = -100
     
     # Convert scores to probabilities using softmax
-    exp_scores = np.exp([score_red, score_green])
+    exp_scores = np.exp([score_purple, score_green])
     probabilities = exp_scores / np.sum(exp_scores)
     
     return probabilities
@@ -281,17 +298,6 @@ class MiniGridTransitionDescriber:
         """Calculate Manhattan distance between two positions."""
         return abs(pos1[0] - pos2[0]) + abs(pos1[1] - pos2[1])
 
-    def calculate_turns_needed(self, agent_pos, obj_pos, agent_dir):
-        """Calculate turns needed for the agent to face an object."""
-        relative_position = (obj_pos[0] - agent_pos[0], obj_pos[1] - agent_pos[1])
-        normalized_arr = relative_position / np.max(np.abs(relative_position))
-        if np.array_equal(normalized_arr, DIR_TO_VEC[agent_dir]):  # Already aligned
-            return 0
-        for turns, direction in enumerate(DIR_TO_VEC, start=1):
-            if np.array_equal(direction, normalized_arr):
-                return min(turns, 5 - turns)  # Min turns in either direction
-        return 2  # Default to two turns if diagonal (e.g., obj is far)
-
     def generate_description(self, agent_prev_pos, agent_curr_pos, agent_prev_dir, agent_curr_dir, 
                              prev_view, curr_view, purple_key_pos, green_ball_pos, agent_action):
         """
@@ -327,8 +333,8 @@ class MiniGridTransitionDescriber:
                     green_dist = self.manhattan_distance(agent_curr_pos, green_ball_pos)
                     if purple_dist == green_dist:
                         # Calculate turns needed to face each ball
-                        turns_to_purple = self.calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
-                        turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
+                        turns_to_purple = calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
+                        turns_to_green = calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
                         if turns_to_purple < turns_to_green:
                             return f"the agent sees {', '.join(words)}. agent is closer to the purple key."
                         elif turns_to_green < turns_to_purple:
@@ -378,8 +384,8 @@ class MiniGridTransitionDescriber:
             elif green_curr_dist<purple_curr_dist:
                 movement_desc += f"the agent moved towards to the green ball. "
             elif green_curr_dist==purple_curr_dist:
-                turns_to_purple = self.calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
-                turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
+                turns_to_purple = calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
+                turns_to_green = calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
                 if turns_to_purple < turns_to_green:
                     movement_desc += "the agent moved towards to the purple key. "
                 elif turns_to_green < turns_to_purple:
@@ -415,8 +421,8 @@ class MiniGridTransitionDescriber:
         #         elif purple_dist > green_dist:
         #             appearance_desc += f"the {', '.join(words)} appeared in the current view, agent is closer to the green ball."
         #         else:
-        #             turns_to_purple = self.calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
-        #             turns_to_green = self.calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
+        #             turns_to_purple = calculate_turns_needed(agent_curr_pos, purple_key_pos, agent_curr_dir)
+        #             turns_to_green = calculate_turns_needed(agent_curr_pos, green_ball_pos, agent_curr_dir)
         #             if turns_to_purple < turns_to_green:
         #                 appearance_desc += f"the {', '.join(words)} appeared in the current view, agent is closer to the purple key."
         #             elif turns_to_green < turns_to_purple:
@@ -538,17 +544,19 @@ class SimplePickup(MiniGridEnv):
         # Generate the surrounding walls
         self.grid.wall_rect(0, 0, width, height)
         
-        # # # Place a ball square in the bottom-right corner
-        self.grid.set(4, 2, Ball(color='green'))
+        # # # # Place a ball square in the bottom-right corner
+        # self.grid.set(4, 2, Ball(color='green'))
+        # self.green_ball_loc = (4,2)
         
-        # # # Place a ball square in the bottom-right corner
-        self.grid.set(2, 4, Key(color='purple'))
+        # # # # Place a ball square in the bottom-right corner
+        # self.grid.set(2, 4, Ball(color='red'))
+        # self.purple_key_loc = (2,4)
         
         # Place one green ball at a random position
-        # self.green_ball_loc = self.place_obj(Ball('green'), max_tries=100)
+        self.green_ball_loc = self.place_obj(Ball('green'), max_tries=100)
 
         # Place one purple key at a random position
-        # self.red_ball_loc = self.place_obj(Ball('red'), max_tries=100)
+        self.purple_key_loc = self.place_obj(Key('purple'), max_tries=100)
 
         # Place the agent
         if self.agent_start_pos is not None:
@@ -678,6 +686,6 @@ class SimplePickup(MiniGridEnv):
         if isinstance(self.carrying, Ball) and self.carrying.color == 'green':
             reward = self._reward()
             terminated = True
-        elif isinstance(self.carrying, Ball) and self.carrying.color == 'red':
+        elif isinstance(self.carrying, Key) and self.carrying.color == 'purple':
             terminated = True
         return obs, reward, terminated, truncated, info

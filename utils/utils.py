@@ -72,8 +72,26 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
     print(f"Latent space visualization saved to {fig_save_name}")
     return all_z, all_labels
 
+def compute_entropy(probs):
+    """Compute entropy of a probability distribution."""
+    probs = np.clip(probs, 1e-12, 1.0)  # Avoid log(0)
+    return -np.sum(probs * np.log(probs), axis=1)
+
 def get_data(datapath):
     return np.load(datapath, allow_pickle=True)
+
+def anneal_coefficient(epoch, max_epoch, start_value, end_value, buffer_timestep):
+    """
+    Anneals the coefficient with a buffer period where it stays at the start_value,
+    and then linearly increases to the end_value after the buffer period.
+    """
+    if epoch < buffer_timestep:
+        return start_value
+    else:
+        # Linearly anneal after buffer period
+        adjusted_epoch = epoch - buffer_timestep
+        annealing_duration = max_epoch - buffer_timestep
+        return start_value + (end_value - start_value) * (adjusted_epoch / annealing_duration)
 
 class Dataset(Dataset):
     def __init__(self, sentences):

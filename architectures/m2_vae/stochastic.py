@@ -20,11 +20,11 @@ class Stochastic(nn.Module):
         # log_std = 0.5 * log_var
         # std = exp(log_std)
         std = log_var.mul(0.5).exp_()
-
-        # z = std * epsilon + mu
-        z = mu.addcmul(std, epsilon)
-
-        return z
+        if self.training:
+            # z = std * epsilon + mu
+            return mu.addcmul(std, epsilon)
+        else:
+            return mu
 
 class GaussianSample(Stochastic):
     """
