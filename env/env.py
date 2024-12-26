@@ -531,7 +531,7 @@ class SimplePickup(MiniGridEnv):
             render_mode = render_mode,
             **kwargs,
         )
-        self.observation_space = spaces.Box(low=0, high=1, shape=(79,), dtype=np.float32)
+        # self.observation_space = spaces.Box(low=0, high=1, shape=(79,), dtype=np.float32)
 
     @staticmethod
     def _gen_mission():
@@ -672,15 +672,16 @@ class SimplePickup(MiniGridEnv):
     
     def get_unprocesed_obs(self):
         return self.obs
-        
-    def reset(self):
-        self.obs, info = super().reset()
-        obs = preprocess_observation(self.obs)
-        return obs, info
+    
+
+    # def reset(self, seed):
+    #     self.obs, info = super().reset(seed)
+    #     # obs = preprocess_observation(self.obs)
+    #     return self.obs, info
         
     def step(self, action):
         self.obs, reward, terminated, truncated, info = super().step(action)
-        obs = preprocess_observation(self.obs)
+        # obs = preprocess_observation(self.obs)
 
         # Check if the agent has picked up the goal object (e.g., the ball)
         if isinstance(self.carrying, Ball) and self.carrying.color == 'green':
@@ -688,4 +689,4 @@ class SimplePickup(MiniGridEnv):
             terminated = True
         elif isinstance(self.carrying, Key) and self.carrying.color == 'purple':
             terminated = True
-        return obs, reward, terminated, truncated, info
+        return self.obs, reward, terminated, truncated, info

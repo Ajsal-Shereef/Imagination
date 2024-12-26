@@ -16,7 +16,7 @@ class SAC(nn.Module):
     
     def __init__(self,
                 config,
-                state_size,
+                input_dim,
                 action_size,
                 device,
                 buffer_size,
@@ -32,7 +32,7 @@ class SAC(nn.Module):
         """
         super(SAC, self).__init__()
         self.config = config
-        self.state_size = state_size
+        self.input_dim = input_dim
         self.action_size = action_size
 
         self.device = device
@@ -48,23 +48,22 @@ class SAC(nn.Module):
         self.log_alpha = torch.tensor([0.0], requires_grad=True)
         self.alpha = self.log_alpha.exp().detach()
         self.alpha_optimizer = optim.Adam(params=[self.log_alpha], lr=learning_rate) 
-                
+        
         # Actor Network 
-
-        self.actor_local = Actor(state_size, action_size, hidden_size).to(device)
+        self.actor_local = Actor(input_dim, action_size, hidden_size).to(device)
         self.actor_optimizer = optim.Adam(self.actor_local.parameters(), lr=learning_rate)     
         
         # Critic Network (w/ Target Network)
 
-        self.critic1 = Critic(state_size, action_size, hidden_size).to(device)
-        self.critic2 = Critic(state_size, action_size, hidden_size).to(device)
+        self.critic1 = Critic(input_dim, action_size, hidden_size).to(device)
+        self.critic2 = Critic(input_dim, action_size, hidden_size).to(device)
         
         assert self.critic1.parameters() != self.critic2.parameters()
         
-        self.critic1_target = Critic(state_size, action_size, hidden_size).to(device)
+        self.critic1_target = Critic(input_dim, action_size, hidden_size).to(device)
         self.critic1_target.load_state_dict(self.critic1.state_dict())
 
-        self.critic2_target = Critic(state_size, action_size, hidden_size).to(device)
+        self.critic2_target = Critic(input_dim, action_size, hidden_size).to(device)
         self.critic2_target.load_state_dict(self.critic2.state_dict())
 
         self.critic1_optimizer = optim.Adam(self.critic1.parameters(), lr=learning_rate)
@@ -82,10 +81,8 @@ class SAC(nn.Module):
             state = torch.from_numpy(state).float().to(self.device)
         with torch.no_grad():
             action = self.actor_local.get_det_action(state)
-        if action.dim() > 0:
-            return action
-        else:
-            return action.item()
+        #Action is similar to tensor([x])
+        return action.item()
 
     def calc_policy_loss(self, states, alpha):
         _, action_probs, log_pis = self.actor_local.evaluate(states)
@@ -180,6 +177,7 @@ class SAC(nn.Module):
     def load_params(self, path):
         """Load model and optimizer parameters."""
         params = torch.load(path, map_location=device)
+        self.feature_encoder.load_state_dict(params["feature_encoder"])
         self.actor_local.load_state_dict(params["actor"])
         self.critic1.load_state_dict(params["critic1"])
         self.critic2.load_state_dict(params["critic2"])

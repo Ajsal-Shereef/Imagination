@@ -3,7 +3,8 @@ import torch.nn as nn
 from torch.distributions import Categorical
 import numpy as np
 import torch.nn.functional as F
-
+from architectures.cnn import CNNLayer, CNN
+from architectures.mlp import Linear
 
 def hidden_init(layer):
     fan_in = layer.weight.data.size()[0]
@@ -13,7 +14,7 @@ def hidden_init(layer):
 class Actor(nn.Module):
     """Actor (Policy) Model."""
 
-    def __init__(self, state_size, action_size, hidden_size=32):
+    def __init__(self, input_dim, action_size, hidden_size=32):
         """Initialize parameters and build model.
         Params
         ======
@@ -25,14 +26,19 @@ class Actor(nn.Module):
         """
         super(Actor, self).__init__()
         
-        self.fc1 = nn.Linear(state_size, hidden_size)
+        conv1 = CNNLayer(input_dim, 32, 8, 2)
+        conv2 = CNNLayer(32, 64, 8, 2)
+        conv3 = CNNLayer(64, 64, 3)
+        conv_feature = Linear(576, 32)
+        self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
+        self.fc1 = nn.Linear(32, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, action_size)
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, state):
-
-        x = F.relu(self.fc1(state))
+        feature = self.feature_encoder(state)
+        x = F.relu(self.fc1(feature[0]))
         x = F.relu(self.fc2(x))
         action_probs = self.softmax(self.fc3(x))
         return action_probs
@@ -73,7 +79,7 @@ class Actor(nn.Module):
 class Critic(nn.Module):
     """Critic (Value) Model."""
 
-    def __init__(self, state_size, action_size, hidden_size=32):
+    def __init__(self, input_dim, action_size, hidden_size=32):
         """Initialize parameters and build model.
         Params
         ======
@@ -83,7 +89,12 @@ class Critic(nn.Module):
             hidden_size (int): Number of nodes in the network layers
         """
         super(Critic, self).__init__()
-        self.fc1 = nn.Linear(state_size, hidden_size)
+        conv1 = CNNLayer(input_dim, 32, 8, 2)
+        conv2 = CNNLayer(32, 64, 8, 2)
+        conv3 = CNNLayer(64, 64, 3)
+        conv_feature = Linear(576, 32)
+        self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
+        self.fc1 = nn.Linear(32, hidden_size)
         self.fc2 = nn.Linear(hidden_size, hidden_size)
         self.fc3 = nn.Linear(hidden_size, action_size)
         self.reset_parameters()
@@ -95,6 +106,7 @@ class Critic(nn.Module):
 
     def forward(self, state):
         """Build a critic (value) network that maps (state, action) pairs -> Q-values."""
-        x = F.relu(self.fc1(state))
+        feature = self.feature_encoder(state)
+        x = F.relu(self.fc1(feature[0]))
         x = F.relu(self.fc2(x))
         return self.fc3(x)

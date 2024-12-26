@@ -5,10 +5,10 @@ M2_General:
   datapath : "data"
   num_goals : 2
 M2_Network:
-  input_dim : 79
+  input_dim : 3
   encoder_hidden_dim : [512]
-  latent_dim : 8
+  latent_dim : 24
   decoder_hidden_dim : [512]
-  epochs : 2000
+  epochs : 800
   batch_size : 64
-  lr_model : 3e-4
+  lr_model : 1e-4

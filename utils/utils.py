@@ -1,9 +1,13 @@
 import os
 import cv2
 import torch
+import string
+import random
 import numpy as np
 import matplotlib.pyplot as plt
+
 from tqdm import tqdm
+from datetime import datetime
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from torch.utils.data import Dataset
@@ -72,6 +76,34 @@ def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], m
     print(f"Latent space visualization saved to {fig_save_name}")
     return all_z, all_labels
 
+def create_dump_directory(path):
+    str = ''.join(random.choices(string.ascii_uppercase + string.digits, k=6))
+    dump_dir = os.path.join(path, datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_{}'.format(str))
+    os.makedirs(dump_dir, exist_ok=True)
+    return dump_dir
+
+def custom_soft_action_encoding(action, num_action=2, dim=24):
+    if dim % num_action != 0:
+        raise ValueError("Action encoding dimension must be divisible by {}".format(num_action))
+    
+    if torch.is_tensor(action):
+        action_np = action.detach().cpu().numpy()
+    else:
+        action_np = np.array(action, dtype=np.float32)
+    
+    num_dims_per_action = dim // num_action
+    
+    def f(soft_labels):
+        encoding = np.zeros((dim,), dtype=np.float32)
+        for idx, label in enumerate(soft_labels):
+            start_idx = idx * num_dims_per_action
+            end_idx = start_idx + num_dims_per_action
+            encoding[start_idx:end_idx] = label  # Fill the respective slice with the soft label value
+        return encoding
+
+    action_encoded = np.array([f(soft_label) for soft_label in action_np])
+    return action_encoded
+
 def compute_entropy(probs):
     """Compute entropy of a probability distribution."""
     probs = np.clip(probs, 1e-12, 1.0)  # Avoid log(0)
@@ -80,7 +112,7 @@ def compute_entropy(probs):
 def get_data(datapath):
     return np.load(datapath, allow_pickle=True)
 
-def anneal_coefficient(epoch, max_epoch, start_value, end_value, buffer_timestep):
+def anneal_coefficient(epoch, max_epoch, start_value, end_value, buffer_timestep, is_increase = True):
     """
     Anneals the coefficient with a buffer period where it stays at the start_value,
     and then linearly increases to the end_value after the buffer period.
@@ -91,7 +123,10 @@ def anneal_coefficient(epoch, max_epoch, start_value, end_value, buffer_timestep
         # Linearly anneal after buffer period
         adjusted_epoch = epoch - buffer_timestep
         annealing_duration = max_epoch - buffer_timestep
-        return start_value + (end_value - start_value) * (adjusted_epoch / annealing_duration)
+        if is_increase:
+            return start_value + (end_value - start_value) * (adjusted_epoch / annealing_duration)
+        else:
+            return start_value - (start_value - end_value) * (adjusted_epoch / annealing_duration)
 
 class Dataset(Dataset):
     def __init__(self, sentences):
@@ -191,14 +226,17 @@ def monte_carlo_entropy(alpha, mu, sigma, num_samples=10000):
 
 def collect_random(env, dataset, num_samples=200):
     state, info = env.reset()
+    state = np.transpose(state['image'], (2, 0, 1))
     for _ in range(num_samples):
         action = env.action_space.sample()
         next_state, reward, truncated, terminated, _ = env.step(action)
+        next_state = np.transpose(next_state['image'], (2, 0, 1))
         done = truncated + terminated
         dataset.add(state, action, reward, next_state, done)
         state = next_state
         if done:
             state, info = env.reset()
+            state = np.transpose(state['image'], (2, 0, 1))
             
 def write_video(frames, episode, dump_dir, frameSize = (224, 224)):
     os.makedirs(dump_dir, exist_ok=True)
@@ -218,7 +256,7 @@ def test(env, agent, save_dir, n_episode=5):
         score = 0
         episode_step = 0
         while not done:
-            action = agent.get_action(state)
+            action = agent.get_action(state["image"])
             next_state, reward, terminated, truncated, info = env.step(action)
             done = terminated + truncated
             frame = env.get_frame()

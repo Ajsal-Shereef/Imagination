@@ -1,12 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.autograd import Variable
+
 from torch.nn import init
-
-from architectures.m2_vae.stochastic import GaussianSample, GaussianMerge, GumbelSoftmax
+from torch.autograd import Variable
+from architectures.mlp import Linear
+from architectures.film import FiLMLayer
+from architectures.cnn import CNNLayer, CNN
+from utils.utils import custom_soft_action_encoding
 from architectures.m2_vae.distributions import log_gaussian, log_standard_gaussian
+from architectures.m2_vae.stochastic import GaussianSample, GaussianMerge, GumbelSoftmax
 
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 class Perceptron(nn.Module):
     def __init__(self, dims, activation_fn=F.relu, output_activation=None):
@@ -27,8 +32,6 @@ class Perceptron(nn.Module):
 
         return x
 
-
-
 class Encoder(nn.Module):
     def __init__(self, dims, sample_layer=GaussianSample):
         """
@@ -45,20 +48,20 @@ class Encoder(nn.Module):
         """
         super(Encoder, self).__init__()
 
-        [x_dim, h_dim, z_dim] = dims
-        neurons = [x_dim, *h_dim]
-        linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
-
-        self.hidden = nn.ModuleList(linear_layers)
-        self.sample = sample_layer(h_dim[-1], z_dim)
+        [input_dim, z_dim] = dims
+        conv1 = CNNLayer(input_dim, 32, 5, 2)
+        conv2 = CNNLayer(32, 64, 5, 2)
+        conv3 = CNNLayer(64, 64, 3)
+        conv_feature = Linear(1600, 256)
+        self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
+        self.sample = sample_layer(256, z_dim)
         
 
     def forward(self, x):
-        for layer in self.hidden:
-            x = F.relu(layer(x))
+        x = self.feature_encoder(x)
         # if not self.training:
         #     self.sample.training = False
-        return self.sample(x)
+        return self.sample(x[0])
 
 
 class Decoder(nn.Module):
@@ -76,20 +79,35 @@ class Decoder(nn.Module):
         """
         super(Decoder, self).__init__()
 
-        [z_dim, h_dim, x_dim] = dims
+        [z_dim, y_dim, x_dim] = dims
+        self.z_dim = z_dim
+        self.num_goals = y_dim
+        # self.film = FiLMLayer(z_dim, z_dim)
+        
+        self.fc_cnn1 = Linear(z_dim*2, 256)
+        self.fc_cnn2 = Linear(256, 1600)
+        self.net = nn.Sequential(
+            # First layer: Upsample to 16x16
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1),  # 64x3x3 -> 32x16x16
+            nn.ReLU(),
+            
+            # Second layer: Upsample to 40x40
+            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=0),  # 32x16x16 -> 3x40x40
+            nn.LeakyReLU(),  # Optional: Apply activation for output normalization
+            
+            # Third layer: Upsample to 40x40
+            nn.ConvTranspose2d(16, x_dim, kernel_size=4, stride=2, padding=0),  # 32x16x16 -> 3x40x40
+            nn.LeakyReLU()  # Optional: Apply activation for output normalization
+        )
 
-        neurons = [z_dim, *h_dim]
-        linear_layers = [nn.Linear(neurons[i-1], neurons[i]) for i in range(1, len(neurons))]
-        self.hidden = nn.ModuleList(linear_layers)
-
-        self.reconstruction = nn.Linear(h_dim[-1], x_dim)
-
-        self.output_activation = nn.ReLU()
-
-    def forward(self, x):
-        for layer in self.hidden:
-            x = F.relu(layer(x))
-        return self.output_activation(self.reconstruction(x))
+    def forward(self, z, y):
+        action_encoded = torch.tensor(custom_soft_action_encoding(y, self.num_goals, self.z_dim)).to(device).float()
+        x = torch.cat((z, action_encoded), 1)
+        # x = self.film(z,action_encoded)
+        linear_feature = self.fc_cnn1(x)
+        linear_feature = self.fc_cnn2(linear_feature)
+        linear_feature = linear_feature.view(linear_feature.shape[0], 64, 5, 5)
+        return self.net(linear_feature)
 
 
 class VariationalAutoencoder(nn.Module):
@@ -104,12 +122,12 @@ class VariationalAutoencoder(nn.Module):
         """
         super(VariationalAutoencoder, self).__init__()
 
-        [x_dim, z_dim, h_dim] = dims
+        [x_dim, y_dim, z_dim] = dims
         self.z_dim = z_dim
         self.flow = None
 
-        self.encoder = Encoder([x_dim, h_dim, z_dim])
-        self.decoder = Decoder([z_dim, list(reversed(h_dim)), x_dim])
+        self.encoder = Encoder([x_dim, z_dim])
+        self.decoder = Decoder([z_dim, y_dim, x_dim])
         self.kl_divergence = 0
 
         for m in self.modules():

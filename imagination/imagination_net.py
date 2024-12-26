@@ -7,6 +7,7 @@ import torch.nn.functional as F
 from architectures.Layers import *
 from architectures.film import FiLMLayer
 from architectures.mlp import MLP, Linear
+from architectures.cnn import CNNLayer, CNN
 from env.env import MiniGridTransitionDescriber
 from sentence_transformers import SentenceTransformer
 from utils.utils import anneal_coefficient, compute_entropy
@@ -32,7 +33,7 @@ class ImaginationNet(nn.Module):
         super(ImaginationNet, self).__init__()
         self.env = env
         self.config = config
-        self.input_dim = env.observation_space.shape[0]
+        self.input_dim = env.observation_space['image'].shape[-1]
         self.vae = vae
         hidden_layers = config.Imagination_Network.hidden_layers
         self.encoder = MLP(input_size = self.input_dim,

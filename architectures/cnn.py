@@ -3,7 +3,7 @@ import math
 import torch.nn as nn
 import math
 
-from common_utils import identity
+from architectures.common_utils import identity
 from architectures.mlp import MLP, GaussianDist, CategoricalDistParams, TanhGaussianDistParams
 import torch.nn.functional as F
 
@@ -72,7 +72,7 @@ class CNN(nn.Module):
         x = self.cnn(x)
         # flatten x
         if is_flatten:
-            x = x.view(x.size(0), -1)
+            x = x.reshape(x.size(0), -1)
         return x
     
     def get_cnn_feature(self, input, cnn_layer, is_flatten=True):

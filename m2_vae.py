@@ -48,78 +48,97 @@ def main(args: DictConfig) -> None:
     # Initialize dataset and dataloader
     #Loading the dataset
     datasets = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/data.pkl')
+    datasets = [i/255 for i in datasets]
     # captions = get_data(f'{args.P_VAE_General.datapath}/{args.P_VAE_General.env}/captions.pkl')
     class_probs = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/class_prob.pkl')
     
-    unlabelled_data, labelled_data, _, labels = train_test_split(datasets, class_probs, test_size=0.10, random_state=42)
+    unlabelled_data, labelled_data, unused_labels, labels = train_test_split(datasets, class_probs, test_size=0.20, random_state=42)
     print(len(labelled_data))
-    # alpha = 0.1 * len(unlabelled_data) / len(labelled_data)
-    alpha = 2000
     
-    unlabelled_data = Dataset(unlabelled_data)
+    #Create a model dump directory
+    model_dir = create_dump_directory("models/m2_vae")
+    
+    # alpha = 0.1 * len(unlabelled_data) / len(labelled_data)
+    alpha = 100
+    
+    unlabelled_data = TwoListDataset(unlabelled_data, unused_labels)
     labelled_data = TwoListDataset(labelled_data, labels)
     unlabelled_data_loader = DataLoader(unlabelled_data, batch_size=900, shuffle=True)
     labelled_data_loader = DataLoader(labelled_data, batch_size=900, shuffle=True)
     #Creating the model and the optimizer
-    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim, args.M2_Network.encoder_hidden_dim]).to(device)
+    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim]).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
     
     wandb.watch(model)
     epoch_bar = tqdm(range(args.M2_Network.epochs), desc="Training Progress", unit="epoch")
     for epoch in epoch_bar:
-        total_loss, accuracy = (0, 0)
+        total_loss, accuracy_labeled, accuracy_unlabeled = (0, 0, 0)
         classification_losses, reconstruction_errors, kl_losses  = 0, 0, 0
         L_losses, U_losses = 0, 0
         iter = 0
-        for unlabelled, (labelled, labels) in zip(unlabelled_data_loader, cycle(labelled_data_loader)):
-            x, y, u = Variable(labelled).to(device).float(), Variable(labels).to(device).float(), Variable(unlabelled[0]).to(device).float()
+        for (unlabelled, unused_labels), (labelled, labels) in zip(unlabelled_data_loader, cycle(labelled_data_loader)):
+            x, y, u, uy = Variable(labelled).to(device).float(), Variable(labels).to(device).float(), Variable(unlabelled).to(device).float(), Variable(unused_labels).to(device).float()
 
             labelled_reconstruction, x_latent, mu, log_var, _ = model(x,y)
+            
+            # kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, 0.1, 1, 100, True)
+            # L = model.L(x, y, labelled_reconstruction, mu, log_var, kl_divergence_weight)
             L = model.L(x, y, labelled_reconstruction, mu, log_var)
             
             # dummy_y = torch.full((u.shape[0], 2), 0.5).to(device)
             unlabelled_reconstruction, u_latent, mu, log_var, y_pred_unlabelled = model(u)
+            # reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var, kl_divergence_weight)
             reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var)
             
             #Classification loss for labelled data
             # Regular cross entropy
             y_pred_labelled = model.classify(x_latent)
-            classication_loss = torch.sum(y * torch.log(y_pred_labelled + 1e-8), dim=1).mean()
-            #The negative sign infront of L andU is as in the paper. model.U calculate the U.
-            J_alpha = -L - alpha * classication_loss - U
+            classification_loss = torch.sum(y * torch.log(y_pred_labelled + 1e-8), dim=1).mean()
+            #The reconstructed tmage should also produce the same label
+            # y_pred_labelled_reconstructed = model(labelled_reconstruction)
+            # classification_loss_labeled_reconstructed = torch.sum(y * torch.log(y_pred_labelled_reconstructed[-1] + 1e-8), dim=1).mean()
+            # classification_loss = (classification_loss_labeled + classification_loss_loss_labeled_reconstructed) / 2
+            #The negative sign infront of L and U is as in the paper. model.U calculate the U.
+            
+            #Linearly descrese the alpha
+            # alpha = anneal_coefficient(epoch, args.M2_Network.epochs, 500, 50, 200, False)
+            J_alpha = -L - alpha * classification_loss - U
 
             J_alpha.backward()
             optimizer.step()
             optimizer.zero_grad()
 
             total_loss += J_alpha.item()
-            classification_losses += classication_loss.item()
+            classification_losses += classification_loss.item()
             reconstruction_errors += reconstruction_error
             kl_losses += kl_loss
             L_losses += -L.item()
             U_losses += -U.item()
             
-            # Mask to identify rows where the target is not [0.5, 0.5]
-            mask = ~(torch.all(y == 0.5, dim=1))
+            # # Mask to identify rows where the target is not [0.5, 0.5]
+            # mask = ~(torch.all(y == 0.5, dim=1))
 
-            # Calculate the predictions and the targets for valid rows
-            valid_y_pred = torch.max(y_pred_labelled[mask], 1)[1].data
-            valid_y = torch.max(y[mask], 1)[1].data
+            # # Calculate the predictions and the targets for valid rows
+            # valid_y_pred = torch.max(y_pred_labelled[mask], 1)[1].data
+            # valid_y = torch.max(y[mask], 1)[1].data
 
-            # Compute accuracy only for valid rows
-            acc = torch.mean((valid_y_pred == valid_y).float())
-            accuracy += acc.item()
+            # # Compute accuracy only for valid rows
+            # acc = torch.mean((valid_y_pred == valid_y).float())
+            # accuracy += acc.item()
+            accuracy_labeled += torch.mean((torch.max(y_pred_labelled, 1)[1].data == torch.max(y, 1)[1].data).float())
+            accuracy_unlabeled += torch.mean((torch.max(y_pred_unlabelled, 1)[1].data == torch.max(uy, 1)[1].data).float())
             iter += 1
         wandb.log({"Loss" : total_loss/len(unlabelled_data_loader),
-                   "Classification_loss" : -classication_loss/len(unlabelled_data_loader),
+                   "Classification_loss" : -classification_losses/len(unlabelled_data_loader),
                    "reconstruction_error" : reconstruction_error/len(unlabelled_data_loader),
-                   "kl_loss" : kl_loss/len(unlabelled_data_loader),
+                   "kl_loss" : kl_losses/len(unlabelled_data_loader),
                    "L loss" : L_losses/len(unlabelled_data_loader),
                    "U loss" : U_losses/len(unlabelled_data_loader),
-                   "Accuracy" : accuracy/len(unlabelled_data_loader)}, step=epoch)
-        epoch_bar.set_description(f"Accuracy {accuracy/len(unlabelled_data_loader)} Loss {total_loss/len(unlabelled)}")
-    model.save("models/m2_vae")
-    print("[INFO] M2 model saved to models/m2_vae")
+                   "Accuracy" : accuracy_labeled/len(unlabelled_data_loader),
+                   "Unlabelled Accuracy" : accuracy_unlabeled/len(unlabelled_data_loader),
+                   "Alpha" : alpha}, step=epoch)
+        epoch_bar.set_description(f"Accuracy {accuracy_labeled/len(unlabelled_data_loader)} Loss {total_loss/len(unlabelled)}")
+    model.save(model_dir)
     model.eval()
     # Fit a Gaussian Mixture Model
     full_data = TwoListDataset(datasets, class_probs)

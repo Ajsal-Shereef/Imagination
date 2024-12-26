@@ -1,8 +1,9 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.nn import init
 
+from torch.nn import init
+from utils.utils import anneal_coefficient
 from architectures.m2_vae.vae import VariationalAutoencoder
 from architectures.m2_vae.distributions import log_standard_categorical
 from architectures.m2_vae.vae import Encoder, Decoder, LadderEncoder, LadderDecoder
@@ -16,12 +17,14 @@ class Classifier(nn.Module):
         with softmax output.
         """
         super(Classifier, self).__init__()
-        [x_dim, h_dim, y_dim] = dims
-        self.dense = nn.Linear(x_dim, h_dim)
-        self.logits = nn.Linear(h_dim, y_dim)
+        [x_dim, y_dim] = dims
+        self.dense0 = nn.Linear(x_dim, 256)
+        self.dense1 = nn.Linear(256, 512)
+        self.logits = nn.Linear(512, y_dim)
 
     def forward(self, x):
-        x = F.relu(self.dense(x))
+        x = F.relu(self.dense0(x))
+        x = F.relu(self.dense1(x))
         x = F.softmax(self.logits(x), dim=-1)
         return x
 
@@ -40,12 +43,12 @@ class DeepGenerativeModel(VariationalAutoencoder):
         Initialise a new generative model
         :param dims: dimensions of x, y, z and hidden layers.
         """
-        [x_dim, self.y_dim, z_dim, h_dim] = dims
-        super(DeepGenerativeModel, self).__init__([x_dim, z_dim, h_dim])
+        [x_dim, self.y_dim, z_dim] = dims
+        super(DeepGenerativeModel, self).__init__([x_dim, self.y_dim, z_dim])
 
-        self.encoder = Encoder([x_dim, h_dim, z_dim])
-        self.decoder = Decoder([z_dim + self.y_dim, list(reversed(h_dim)), x_dim])
-        self.classifier = Classifier([z_dim, h_dim[0], self.y_dim])
+        self.encoder = Encoder([x_dim, z_dim])
+        self.decoder = Decoder([z_dim, self.y_dim, x_dim])
+        self.classifier = Classifier([z_dim, self.y_dim])
 
         for m in self.modules():
             if isinstance(m, nn.Linear):
@@ -59,7 +62,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
         if y is None:
             y = self.classify(z)
         # Reconstruct data point from latent data and label
-        x_mu = self.decoder(torch.cat([z, y], dim=-1))
+        x_mu = self.decoder(z, y)
 
         return x_mu, z, z_mu, z_log_var, y
 
@@ -79,7 +82,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
         return x
     
      # -L(x,y), elbo for labeled data
-    def L(self,x,y,recon_x,mu,logvar):
+    def L(self,x,y,recon_x,mu,logvar, kl_divergence_weight = 0.08):
         n, d = mu.shape
         # loglik = -F.binary_cross_entropy(recon_x, x, reduction='sum')/n
         loglik = -F.mse_loss(recon_x, x, reduction='sum')/n
@@ -88,13 +91,13 @@ class DeepGenerativeModel(VariationalAutoencoder):
         # loglik_y = -log_standard_categorical(y).sum()/n
         pred_label = self.classifier(mu)
         # loglik_y = -F.binary_cross_entropy(pred_label, y, reduction='sum')/n
-        loglik_y = -torch.mean((y * pred_label).sum(dim=1))
+        loglik_y = -torch.mean((y * torch.log(pred_label)).sum(dim=1))
 
-        return loglik + loglik_y - KLD
+        return loglik + loglik_y - kl_divergence_weight*KLD
 
 
     # -U(x), elbo for unlabeled data
-    def U(self, x, prob,recon_x,mu,logvar):
+    def U(self, x, prob,recon_x,mu,logvar, kl_divergence_weight = 0.08):
         n, d = mu.shape
 
 
@@ -103,7 +106,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
 
         # -L(x,y)
         # loglik = -F.binary_cross_entropy(recon_x, x, reduction='none').sum(1).sum(1).sum(1) #n*1
-        loglik = -F.mse_loss(recon_x, x, reduction='sum')/n
+        loglik = -F.mse_loss(recon_x.squeeze(), x, reduction='sum')/n
         KLD = -0.5*(1 + (logvar-logvar.exp()) - mu.pow(2)) #n*1
         KLD = torch.sum(KLD, dim=-1).sum(-1)/n
 
@@ -114,7 +117,7 @@ class DeepGenerativeModel(VariationalAutoencoder):
         #q(y|x)*prior
         weighted_prior = torch.sum(prob*loglik_y)
 
-        _Lxy = loglik + weighted_prior - KLD #n*1
+        _Lxy = loglik + weighted_prior - kl_divergence_weight*KLD #n*1
 
         return -loglik.item(), KLD.item(), _Lxy + H
     

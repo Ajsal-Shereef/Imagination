@@ -189,7 +189,7 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
     class_prob = []
     
     # Load the sentecebert model to get the embedding of the goals from the LLM
-    sentencebert = SentenceTransformer(encoder, device=device)
+    # sentencebert = SentenceTransformer(encoder, device=device)
 
     # Initialize Q-network if not using random policy
     if not use_random:
@@ -230,13 +230,14 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
         # captions.append(caption_encoding)
         # caption = state_captioner.generate_caption(state)
         # state = preprocess_observation(state)
-        prob = calculate_probabilities(env.agent_pos, 
-                                           env.get_unprocesed_obs()['image'], 
-                                           env.get_unprocesed_obs()['direction'], 
-                                           env.purple_key_loc, 
-                                           env.green_ball_loc)
-        data.append(state)
-        class_prob.append(prob)
+        # prob = calculate_probabilities(env.agent_pos, 
+        #                                env.get_unprocesed_obs()['image'], 
+        #                                env.agent_dir, 
+        #                                env.purple_key_loc, 
+        #                                env.green_ball_loc)
+        state = np.transpose(state['image'], (2, 0, 1))
+        # data.append(state)
+        # class_prob.append(prob)
         
         done = False
         step = 0
@@ -251,19 +252,23 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             # cv2.imwrite("previous_frame.png", frame)
             
-            p_agent_loc = env.agent_pos
+            # p_agent_loc = env.agent_pos
             
-            p_state = env.get_unprocesed_obs()
-            obj, caption = generate_caption(p_state['image'])
+            # p_state = env.get_unprocesed_obs()
+            # obj, caption = generate_caption(p_state['image'])
             next_state, reward, terminated, truncated, info = env.step(action)
-
-            c_state = env.get_unprocesed_obs()
+            
+            c_frame = cv2.cvtColor(next_state['image'], cv2.COLOR_BGR2RGB)
+            cv2.imwrite("frame.png", c_frame)
+            
+            next_state = np.transpose(next_state['image'], (2, 0, 1))
+            # c_state = env.get_unprocesed_obs()
             
             # c_frame = env.get_frame()
             # c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
             # cv2.imwrite("frame.png", c_frame)
             
-            c_agent_loc = env.agent_pos
+            # c_agent_loc = env.agent_pos
             # transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
             #                                                                agent_curr_pos = c_agent_loc, 
             #                                                                agent_prev_dir = p_state['direction'], 
@@ -283,14 +288,14 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             # frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             # cv2.imwrite("frame.png", frame)
             prob = calculate_probabilities(env.agent_pos, 
-                                           env.get_unprocesed_obs()['image'], 
-                                           env.get_unprocesed_obs()['direction'], 
+                                           env.unwrapped.obs['image'], 
+                                           env.agent_dir, 
                                            env.purple_key_loc, 
                                            env.green_ball_loc)
             data.append(next_state)
             class_prob.append(prob)
             state = next_state
-            p_state = c_state
+            # p_state = c_state
             step += 1
         
         print(f"Episode {episode}/{episodes} finished after {step} steps.")
@@ -322,6 +327,8 @@ def main():
     if env_name == "SimplePickup":
         from env.env import SimplePickup #TransitionCaptioner
         env = SimplePickup(max_steps=max_steps, agent_view_size=5, size=7)
+        from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
+        env = RGBImgPartialObsWrapper(env)
         # transition_captioner = 
     
     # Collect data
