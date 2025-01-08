@@ -5,7 +5,7 @@ Imagination_General:
   max_ep_len : 20
   encoder_model : "all-MiniLM-L12-v2"
   datapath : "data"
-  vae_checkpoint : "models/m2_vae/m2_vae.pth"
+  vae_checkpoint : "models/m2_vae/2024-12-26_19-00-14_V2ND3K/m2_vae.pth"
   sentece_encoder_model : "models/captioner.pth"
   buffer_size : 3000_00
   agent : 'sac'
@@ -21,4 +21,4 @@ Imagination_Network:
   epoch : 5000
   max_gradient : 10
   checkpoint_interval : 200
-  output_dim : 384
+  output_dim : 256

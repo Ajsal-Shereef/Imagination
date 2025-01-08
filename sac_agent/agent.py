@@ -177,7 +177,6 @@ class SAC(nn.Module):
     def load_params(self, path):
         """Load model and optimizer parameters."""
         params = torch.load(path, map_location=device)
-        self.feature_encoder.load_state_dict(params["feature_encoder"])
         self.actor_local.load_state_dict(params["actor"])
         self.critic1.load_state_dict(params["critic1"])
         self.critic2.load_state_dict(params["critic2"])

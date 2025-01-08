@@ -58,7 +58,7 @@ def train(config):
         collect_random(env=env, dataset=sac_agent.buffer, num_samples=2000)
         for i in range(1, config.episodes+1):
             state, info = env.reset()
-            state = np.transpose(state['image'], (2, 0, 1))
+            state = np.transpose(state['image'], (2, 0, 1))/255
             # c_agent_loc = env.agent_pos
             # i = env.get_unprocesed_obs()['direction']
             # transition_caption = transition_captioner.generate_description(agent_prev_pos = None, 
@@ -79,7 +79,7 @@ def train(config):
                 # p_state = env.get_unprocesed_obs()
                 # p_agent_loc = env.agent_pos
                 next_state, reward, terminated, truncated, _ = env.step(action)
-                next_state = np.transpose(next_state['image'], (2, 0, 1))
+                next_state = np.transpose(next_state['image'], (2, 0, 1))/255
                 # c_state = env.get_unprocesed_obs()
                 # c_agent_loc = env.agent_pos
                 # transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 

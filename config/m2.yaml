@@ -6,9 +6,12 @@ M2_General:
   num_goals : 2
 M2_Network:
   input_dim : 3
-  encoder_hidden_dim : [512]
+  classifier_hidden_dim : [256,512]
+  h_dim : 256 
   latent_dim : 24
   decoder_hidden_dim : [512]
-  epochs : 800
+  epochs : 50000
   batch_size : 64
-  lr_model : 1e-4
+  lr_model : 5e-4
+  kl_weight : 0.1
+  save_freequency : 1000

@@ -25,6 +25,8 @@ def main(args: DictConfig) -> None:
     if args.General.env ==  "SimplePickup":
         from env.env import SimplePickup, generate_caption, MiniGridTransitionDescriber, calculate_probabilities
         env = SimplePickup(max_steps=args.General.max_ep_len, agent_view_size=5, size=7, render_mode="rgb_array")
+        from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
+        env = RGBImgPartialObsWrapper(env)
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -66,7 +68,7 @@ def main(args: DictConfig) -> None:
                         args.policy_network_cfg, '')
     else:
         agent = SAC(args,
-                    state_size = env.observation_space.shape[0],
+                    input_dim = env.observation_space['image'].shape[-1],
                     action_size = env.action_space.n,
                     device=device,
                     buffer_size = args.Imagination_General.buffer_size)
@@ -76,21 +78,21 @@ def main(args: DictConfig) -> None:
     for params in agent.parameters():
         params.requires_grad = False
         
-    vae = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim, args.M2_Network.encoder_hidden_dim]).to(device)
-    vae.load(args.Imagination_General.vae_checkpoint)
-    vae.to(device)
-    vae.eval()
+    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim]).to(device)
+    model.load(args.Imagination_General.vae_checkpoint)
+    model.to(device)
+    model.eval()
     
-    for params in vae.parameters():
+    for params in model.parameters():
         params.requires_grad = False
         
     imagination_net = ImaginationNet(env = env,
                                      config = args,
                                      num_goals = args.Imagination_General.num_goals,
                                      agent = agent,
-                                     vae = vae).to(device)
+                                     vae = model).to(device)
         
-    imagination_net.load("models/imagination_net/imagination_net_epoch_800.tar")
+    imagination_net.load("models/imagination_net/imagination_net_epoch_400.tar")
     imagination_net.eval()
     
     transition_captioner = MiniGridTransitionDescriber(5)
@@ -112,50 +114,38 @@ def main(args: DictConfig) -> None:
         while True:
             env.render()
             p_agent_loc = env.agent_pos
-            p_state = env.get_unprocesed_obs()
+            # p_state = env.get_unprocesed_obs()
             if is_agent:
                 with torch.no_grad():
-                    action = agent.get_action(state)
+                    action = agent.get_action(np.transpose(state['image']/255, (2,0,1)))
             else:
                 with torch.no_grad():
-                    caption = generate_caption(state[:-4].reshape((5,5,3)))
-                    imagined_state = imagination_net(torch.tensor(state).float().to(device))
+                    p_state = state['image']
+                    p_state = cv2.cvtColor(p_state, cv2.COLOR_BGR2RGB)
+                    cv2.imwrite("p_state.png", p_state)
+                    imagined_state = imagination_net(torch.tensor(np.transpose(state['image']/255, (2,0,1))).float().to(device))
+                    p_state_imagination_0 = cv2.cvtColor(np.transpose(imagined_state[0,0,...].detach().cpu().numpy(), (2,1,0))*255, cv2.COLOR_BGR2RGB)
+                    p_state_imagination_1 = cv2.cvtColor(np.transpose(imagined_state[0,1,...].detach().cpu().numpy(), (2,1,0))*255, cv2.COLOR_BGR2RGB)
+                    cv2.imwrite("p_state_img0.png", p_state_imagination_0)
+                    cv2.imwrite("p_state_img1.png", p_state_imagination_1)
                     action = agent.get_action(imagined_state[0,0,:])
-                    original_state_prob = calculate_probabilities(env.agent_pos,env.get_unprocesed_obs()['image'],env.get_unprocesed_obs()['direction'], env.purple_key_loc, 
-                                           env.green_ball_loc)
-                    _, _, _, _, vae_original_prob = vae(torch.tensor(state).to(device).float())
-                    
-                    arr1 = np.array([2., 5., 0., 2., 5., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 2., 5., 0., 2., 5., 0., 1., 0., 0.,
-                                     1., 0., 0., 1., 0., 0., 2., 5., 0., 2., 5., 0., 6., 1., 0., 1., 0., 0., 1., 0., 0., 2., 5., 0.,
-                                     2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0.,
-                                     2., 5., 0., 0., 1., 0., 0.,])
-                    
-                    arr2 = np.array([2., 5., 0., 2., 5., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 2., 5., 0., 2., 5., 0., 1., 0., 0.,
-                                     1., 0., 0., 1., 0., 0., 2., 5., 0., 2., 5., 0., 5., 3., 0., 1., 0., 0., 1., 0., 0., 2., 5., 0.,
-                                     2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0.,
-                                     2., 5., 0., 0., 1., 0., 0.,])
-                    
-                    test1 = vae(torch.tensor(arr1).to(device).float(), torch.tensor([1,0]).to(device).float())
-                    test11 = vae(test1[0], torch.tensor([1,0]).to(device).float())
-                    test2 = vae(torch.tensor([2., 5., 0., 2., 5., 0., 1., 0., 0., 1., 0., 0., 1., 0., 0., 2., 5., 0., 2., 5., 0., 1., 0., 0.,
-                                              1., 0., 0., 1., 0., 0., 2., 5., 0., 2., 5., 0., 6., 1., 0., 1., 0., 0., 1., 0., 0., 2., 5., 0.,
-                                              2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0., 2., 5., 0.,
-                                              2., 5., 0., 0., 1., 0., 0.]).to(device).float())
-                    _, _, _, _, vae_1 = vae(imagined_state[0,1,:])
-                    _, _, _, _, vae_0 = vae(imagined_state[0,0,:])
-                    cv2.imwrite("frame.png", frame)
+                    # original_state_prob = calculate_probabilities(env.agent_pos,env.get_unprocesed_obs()['image'],env.get_unprocesed_obs()['direction'], env.purple_key_loc, 
+                    #                       env.green_ball_loc)
+                    _, _, _, _, vae_original_prob = model(torch.tensor(np.transpose(state['image']/255, (2,0,1))).to(device).float())
+                    _, _, _, _, vae_1 = model(imagined_state[0,1,...])
+                    _, _, _, _, vae_0 = model(imagined_state[0,0,...])
             next_state, reward, terminated, truncated, _ = env.step(action)
-            c_agent_loc = env.agent_pos
-            c_state = env.get_unprocesed_obs()
-            transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
-                                                                           agent_curr_pos = c_agent_loc, 
-                                                                           agent_prev_dir = p_state['direction'], 
-                                                                           agent_curr_dir = c_state['direction'], 
-                                                                           prev_view = p_state['image'],
-                                                                           curr_view = c_state['image'],
-                                                                           purple_key_pos = env.purple_key_loc, 
-                                                                           green_ball_pos = env.green_ball_loc,
-                                                                           agent_action = action)
+            # c_agent_loc = env.agent_pos
+            # c_state = env.get_unprocesed_obs()
+            # transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
+            #                                                                agent_curr_pos = c_agent_loc, 
+            #                                                                agent_prev_dir = p_state['direction'], 
+            #                                                                agent_curr_dir = c_state['direction'], 
+            #                                                                prev_view = p_state['image'],
+            #                                                                curr_view = c_state['image'],
+            #                                                                purple_key_pos = env.purple_key_loc, 
+            #                                                                green_ball_pos = env.green_ball_loc,
+            #                                                                agent_action = action)
             
             frame = env.get_frame()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)

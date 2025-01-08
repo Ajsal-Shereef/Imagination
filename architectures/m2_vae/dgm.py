@@ -3,10 +3,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.nn import init
+from architectures.mlp import MLP
 from utils.utils import anneal_coefficient
+from architectures.m2_vae.stochastic import GaussianSample
 from architectures.m2_vae.vae import VariationalAutoencoder
 from architectures.m2_vae.distributions import log_standard_categorical
-from architectures.m2_vae.vae import Encoder, Decoder, LadderEncoder, LadderDecoder
+from architectures.m2_vae.vae import FeatureEncoder, Decoder, LadderEncoder, LadderDecoder
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -17,19 +19,19 @@ class Classifier(nn.Module):
         with softmax output.
         """
         super(Classifier, self).__init__()
-        [x_dim, y_dim] = dims
-        self.dense0 = nn.Linear(x_dim, 256)
-        self.dense1 = nn.Linear(256, 512)
-        self.logits = nn.Linear(512, y_dim)
+        [x_dim, y_dim, hidden] = dims
+        self.mlp = MLP(x_dim, y_dim, hidden, dropout_prob=0.20)
+        # self.dense0 = nn.Linear(x_dim, 256)
+        # self.dense1 = nn.Linear(256, 512)
+        # self.logits = nn.Linear(512, y_dim)
 
     def forward(self, x):
-        x = F.relu(self.dense0(x))
-        x = F.relu(self.dense1(x))
-        x = F.softmax(self.logits(x), dim=-1)
+        x = self.mlp(x)
+        x = F.softmax(x, dim=-1)
         return x
 
 
-class DeepGenerativeModel(VariationalAutoencoder):
+class DeepGenerativeModel(nn.Module):
     def __init__(self, dims):
         """
         M2 code replication from the paper
@@ -43,105 +45,179 @@ class DeepGenerativeModel(VariationalAutoencoder):
         Initialise a new generative model
         :param dims: dimensions of x, y, z and hidden layers.
         """
-        [x_dim, self.y_dim, z_dim] = dims
-        super(DeepGenerativeModel, self).__init__([x_dim, self.y_dim, z_dim])
+        [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden] = dims
+        super(DeepGenerativeModel, self).__init__()
+        self.encoder = FeatureEncoder([self.x_dim, self.h_dim])
+        self.z_latent = GaussianSample(self.h_dim, self.z_dim)
+        self.decoder = Decoder([self.z_dim, self.y_dim, self.h_dim, self.x_dim])
+        self.classifier = Classifier([self.h_dim, self.y_dim, self.classifier_hidden])
 
-        self.encoder = Encoder([x_dim, z_dim])
-        self.decoder = Decoder([z_dim, self.y_dim, x_dim])
-        self.classifier = Classifier([z_dim, self.y_dim])
-
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                init.xavier_normal(m.weight.data)
-                if m.bias is not None:
-                    m.bias.data.zero_()
 
     def forward(self, x, y=None):
         # Add label and data and generate latent variable
-        z, z_mu, z_log_var = self.encoder(x)
+        h = self.encoder(x)
+        z, z_mu, z_log_var = self.z_latent(h[0])
         if y is None:
-            y = self.classify(z)
+            y = self.classify(h[0])
         # Reconstruct data point from latent data and label
-        x_mu = self.decoder(z, y)
+        x_reconstructed = self.decoder(z, y)
 
-        return x_mu, z, z_mu, z_log_var, y
+        return x_reconstructed, z, z_mu, z_log_var, y
 
     def classify(self, x):
         logits = self.classifier(x)
         return logits
-
-    def sample(self, z, y):
-        """
-        Samples from the Decoder to generate an x.
-        :param z: latent normal variable
-        :param y: label (one-hot encoded)
-        :return: x
-        """
-        y = y.float()
-        x = self.decoder(torch.cat([z, y], dim=1))
-        return x
     
-     # -L(x,y), elbo for labeled data
-    def L(self,x,y,recon_x,mu,logvar, kl_divergence_weight = 0.08):
-        n, d = mu.shape
-        # loglik = -F.binary_cross_entropy(recon_x, x, reduction='sum')/n
-        loglik = -F.mse_loss(recon_x, x, reduction='sum')/n
-        KLD = -0.5*(d + (logvar-logvar.exp()).sum()/n - mu.pow(2).sum()/n)
-        # loglik_y = torch.log(y).sum()/n #Human label is assumed to a probabilistic measure
-        # loglik_y = -log_standard_categorical(y).sum()/n
-        pred_label = self.classifier(mu)
-        # loglik_y = -F.binary_cross_entropy(pred_label, y, reduction='sum')/n
-        loglik_y = -torch.mean((y * torch.log(pred_label)).sum(dim=1))
+    def generate(self, x_input: torch.Tensor, c_cond: torch.Tensor, use_mean_z: bool = True) -> torch.Tensor:
+        """
+        Generates images conditionally based on the input image and the provided soft label
 
-        return loglik + loglik_y - kl_divergence_weight*KLD
+        Args:
+            x_input: Input images (B, 3, 40, 40)
+            c_cond: Conditioning soft labels (B, num_classes)
+            use_mean_z: If True, uses the mean latent vector mu; otherwise, samples z
 
+        Returns:
+            x_generated: Generated images (B, 3, 40, 40)
+        """
+        self.eval()
+        with torch.no_grad():
+            h = self.encoder(x_input)
+            z, mu, logvar = self.z_latent(h[0])
+            if use_mean_z:
+                z = mu  # Use mean of q(z|x)
+            else:
+                z = self.reparameterize(mu, logvar)
+            x_generated = self.decoder(z, c_cond)
+        return x_generated
 
-    # -U(x), elbo for unlabeled data
-    def U(self, x, prob,recon_x,mu,logvar, kl_divergence_weight = 0.08):
-        n, d = mu.shape
-
-
-        #Entropy of q(y|x)
-        H = -torch.mul(prob,torch.log(prob)).sum(1).mean()
-
-        # -L(x,y)
-        # loglik = -F.binary_cross_entropy(recon_x, x, reduction='none').sum(1).sum(1).sum(1) #n*1
-        loglik = -F.mse_loss(recon_x.squeeze(), x, reduction='sum')/n
-        KLD = -0.5*(1 + (logvar-logvar.exp()) - mu.pow(2)) #n*1
-        KLD = torch.sum(KLD, dim=-1).sum(-1)/n
-
-        y = torch.ones_like(prob)
-        y = F.softmax(y, dim=-1)
-
-        loglik_y = torch.log(y).to(device)  #constant, value same for all y since we have a uniform prior
-        #q(y|x)*prior
-        weighted_prior = torch.sum(prob*loglik_y)
-
-        _Lxy = loglik + weighted_prior - kl_divergence_weight*KLD #n*1
-
-        return -loglik.item(), KLD.item(), _Lxy + H
+    # def sample(self, z, y):
+    #     """
+    #     Samples from the Decoder to generate an x.
+    #     :param z: latent normal variable
+    #     :param y: label (one-hot encoded)
+    #     :return: x
+    #     """
+    #     y = y.float()
+    #     x = self.decoder(torch.cat([z, y], dim=1))
+    #     return x
     
-    def save(self, save_dir):
-        torch.save(self.state_dict(), f'{save_dir}/m2_vae.pth')
-        print(f"[INFO] model save to {save_dir}/m2_vae.pth")
+    #Loss unction for labelled data
+    def L(self,x, mu, logvar, z, y, kl_weight = 1):
+        """
+        Computes the loss function for GMVAE
+
+        Args:
+            x: Input images (B, 3, 40, 40)
+            mu: Mean of q(z|x) (B, latent_dim)
+            logvar: Log variance of q(z|x) (B, latent_dim)
+            z: Sampled latent variables (B, latent_dim)
+            y: Soft labels (B, num_classes), representing p(y|x)
+        Returns:
+            total_loss: The total loss for the batch
+            loss_dict: Dictionary containing individual loss components
+        """
+        batch_size = x.size(0)
+        device = x.device
+
+        # Reconstruction loss (using soft labels c)
+        # Compute x_recon directly using q_c_probs as the soft labels
+        q_c_probs = self.classify(self.encoder(x)[0])
+        x_recon = self.decoder(z, q_c_probs)  # Use soft labels in the decoder
+
+        # Compute reconstruction loss per sample
+        recon_loss_per_sample = F.binary_cross_entropy(x_recon, x, reduction='none')  # (B, C, H, W)
+        recon_loss_per_sample = recon_loss_per_sample.view(batch_size, -1).sum(dim=1)  # Sum over pixels
+
+        # Mean reconstruction loss over the batch
+        recon_loss = recon_loss_per_sample.mean()
+
+        # KL divergence for z (per sample, summed over latent dimensions)
+        kl_z_per_sample = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)  # (B,)
+        kl_z = kl_z_per_sample.mean()
+
+        # KL divergence for c (per sample)
+        # Assuming uniform prior p(c)
+        log_q_c = torch.log(q_c_probs + 1e-8)  # (B, num_classes)
+        kl_c_per_sample = torch.sum(q_c_probs * (log_q_c - torch.log(torch.tensor(1.0 / self.y_dim, device=device))), dim=1)  # (B,)
+        kl_c = kl_c_per_sample.mean()
+
+        # Total VAE loss
+        total_loss = recon_loss + kl_weight*kl_z + kl_weight*kl_c
         
-    def load(self, path_to_model):
-        old_state_dict = torch.load(path_to_model, map_location=device)
-        # state_dict = OrderedDict()
-        # for k, v in old_state_dict.items():
-        #     k = k.replace('c1_dz_prior', 'u_prior')
-        #     k = k.replace('mean_fc', 'z_mean_fc')
-        #     k = k.replace('logvar_fc', 'z_logvar_fc')
-        #     k = k.replace('c_to_e_logit_pc', 'c_to_a_logit_pc')
-        #     k = k.replace('h_dot_e_to_dz_mean_pc', 'h_dot_a_to_u_mean_pc')
-        #     k = k.replace('h_dot_e_to_dz_logvar_pc.0', 'h_dot_a_to_u_logvar_pc')
-        #     if 'c2_dz_prior' in k:
-        #         continue
-        #     state_dict[k] = v
+        # y: Soft labels representing p(y|x) (B, num_classes)
+        # Compute the expected log likelihood: E_{q(c|x)}[log p(y|c)]
+        # Since p(y|c) = y_c (soft labels), and q(c|x) is available
+        # We compute: -E_{q(c|x)}[log p(y|c)] = - q(c|x) * log(y)
+        # Adding small value to prevent log(0)
+        log_p_y_given_c = torch.log(y + 1e-8)  # (B, num_classes)
+        # Compute the expected log likelihood term
+        expected_log_p_y_given_c = torch.sum(q_c_probs * log_p_y_given_c, dim=1)  # (B,)
+        # Classification loss is negative of the expected log likelihood
+        cls_loss = -expected_log_p_y_given_c.mean()  # Sum over batch
+        # Add classification loss to total loss
+        total_loss += 1*cls_loss
+        return total_loss, cls_loss
 
-        self.load_state_dict(old_state_dict)
-        print(f"[INFO] Model loaded from {path_to_model}")
-        return self
+    # Loss function for unlabeled data
+    def U(self,x, mu, logvar, z, q_c_probs, kl_weight = 1):
+        """
+        Computes the loss function for GMVAE
+
+        Args:
+            x: Input images (B, 3, 40, 40)
+            mu: Mean of q(z|x) (B, latent_dim)
+            logvar: Log variance of q(z|x) (B, latent_dim)
+            z: Sampled latent variables (B, latent_dim)
+            q_c_probs: Class probabilities q(c|x) (B, num_classes)
+            y: Soft labels (B, num_classes), representing p(y|x)
+        Returns:
+            total_loss: The total loss for the batch
+            loss_dict: Dictionary containing individual loss components
+        """
+        batch_size = x.size(0)
+        device = x.device
+
+        # Reconstruction loss (using soft labels c)
+        # Compute x_recon directly using q_c_probs as the soft labels
+        x_recon = self.decoder(z, q_c_probs)  # Use soft labels in the decoder
+
+        # Compute reconstruction loss per sample
+        recon_loss_per_sample = F.binary_cross_entropy(x_recon, x, reduction='none')  # (B, C, H, W)
+        recon_loss_per_sample = recon_loss_per_sample.view(batch_size, -1).sum(dim=1)  # Sum over pixels
+
+        # Total reconstruction loss summed over the batch
+        recon_loss = recon_loss_per_sample.mean()
+
+        # KL divergence for z (per sample, summed over latent dimensions)
+        kl_z_per_sample = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=1)  # (B,)
+        kl_z = kl_z_per_sample.mean()
+        
+        # KL divergence for c (per sample)
+        # Assuming uniform prior p(c)
+        log_q_c = torch.log(q_c_probs + 1e-8)  # (B, num_classes)
+        kl_c_per_sample = torch.sum(q_c_probs * (log_q_c - torch.log(torch.tensor(1.0 / self.y_dim, device=device))), dim=1)  # (B,)
+        kl_c = kl_c_per_sample.mean()
+
+        # Total VAE loss
+        total_loss = recon_loss + kl_weight*kl_z + kl_weight*kl_c
+        return total_loss, recon_loss, kl_z, kl_c
+        
+    def save(self, save_path, epochs=0):
+        torch.save(self.state_dict(), f'{save_path}/model.pt')
+        print(f"[INFO] model saved after {epochs} at, {save_path}/model.pt")
+        with open(f'{save_path}/specs.json', 'w') as f:
+            f.write('''{
+            "input_dim": %d,
+            "num_goals": %d,
+            "h_dim": %d,
+            "latent_dim": %d
+            }''' % (self.x_dim, self.y_dim, self.h_dim, self.z_dim))
+            
+    def load(self, model_dir):
+        params = torch.load(model_dir, map_location=device)
+        self.load_state_dict(params)
+            
 
 
 class StackedDeepGenerativeModel(DeepGenerativeModel):

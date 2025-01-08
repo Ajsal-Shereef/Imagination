@@ -1,7 +1,12 @@
 import os
 import hydra
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
 
+from PIL import Image
 from utils.utils import *
+from utils.visualize import Visualizer
 from sac_agent.agent import SAC
 from partedvae.models import VAE
 from torch.utils.data import DataLoader
@@ -12,6 +17,7 @@ from utils.collect_vae_training_data import collect_data
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+model_dir = "models/m2_vae/2025-01-08_13-28-49_QD8UFF/model.pt"
 
 def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """
@@ -47,53 +53,65 @@ def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[],
                 # imagined_state_0_pred.append(imagined_state_0_label.detach().cpu().numpy())
                 # imagined_state_1_pred.append(imagined_state_1_label.detach().cpu().numpy())
                 
-                frame = cv2.imread('frame.png')
-                frame = np.transpose(frame, (2, 0, 1))/255
-                test = model(torch.tensor(frame).to(device).float())
-                test0 = model(torch.tensor(frame).to(device).float(), torch.tensor([0.0471, 0.9529]).unsqueeze(0).to(device).float())
-                test1 = model(torch.tensor(frame).to(device).float(), torch.tensor([0.9529, 0.0471]).unsqueeze(0).to(device).float())
-                class_0 = model(test0[0])
-                class_1 = model(test1[0])
-                generated = np.transpose(test0[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
-                generated = cv2.cvtColor(generated, cv2.COLOR_BGR2RGB)
-                generated1 = np.transpose(test1[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
-                generated1 = cv2.cvtColor(generated1, cv2.COLOR_BGR2RGB)
-                cv2.imwrite("gen.png", generated*255)
-                cv2.imwrite("gen1.png", generated1*255)
+                # frame = cv2.imread('frame.png')
+                # frame = np.load('frame.npy')
+                # frame = np.transpose(frame, (2, 0, 1))/255
+                # test = model(torch.tensor(frame).to(device).float())
+                # test0 = model(torch.tensor(frame).to(device).float(), test[-1])
+                # test1 = model(torch.tensor(frame).to(device).float(), torch.flip(test[-1], dims=[-1]))
+                # class_0 = model(test0[0])
+                # class_1 = model(test1[0])
+                # generated = np.transpose((test0[0]*255).squeeze().detach().cpu().numpy(), (1, 2, 0))
+                # generated = cv2.cvtColor(generated, cv2.COLOR_BGR2RGB)
+                # image = Image.fromarray(generated.astype(np.uint8))
+                # image.save("gen.png")
+                # plt.imshow(generated.clip(0, 1))  # Clipping is redundant if already in [0, 1]
+                # plt.axis('off')  # Remove axes for visualization
+                # plt.savefig('plot.png')
+                # generated1 = np.transpose((test1[0]*255).squeeze().detach().cpu().numpy(), (1, 2, 0))
+                # np.save("gen1.npy", generated1)
+                # image = Image.fromarray(generated1.astype(np.uint8))
+                # image.save("gen1.png")
+                # generated1 = cv2.cvtColor(generated1, cv2.COLOR_BGR2RGB)
+                # plt.imshow(generated1.clip(0, 1))  # Clipping is redundant if already in [0, 1]
+                # plt.axis('off')  # Remove axes for visualization
+                # plt.show()
                 
-                test_11 = model(test1[0], torch.tensor([0.9529, 0.0471]).unsqueeze(0).to(device).float())
-                generated11 = np.transpose(test_11[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
-                generated11 = cv2.cvtColor(generated11, cv2.COLOR_BGR2RGB)
-                cv2.imwrite("gen11.png", generated11*255)
+                # print(f'gen1 {model(test1[0])[-1]}')
                 
-                print(f'gen11 {model(test_11[0])[-1]}')
+                # test_11 = model(test1[0], torch.flip(test[-1], dims=[-1]))
+                # generated11 = np.transpose(test_11[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
+                # generated11 = cv2.cvtColor(generated11, cv2.COLOR_BGR2RGB)
+                # cv2.imwrite("gen11.png", generated11*255)
                 
-                test_111 = model(test_11[0], torch.tensor([0.9529, 0.0471]).unsqueeze(0).to(device).float())
-                generated111 = np.transpose(test_111[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
-                generated111 = cv2.cvtColor(generated111, cv2.COLOR_BGR2RGB)
-                cv2.imwrite("gen111.png", generated111*255)
+                # print(f'gen11 {model(test_11[0])[-1]}')
                 
-                print(f'gen111 {model(test_111[0])[-1]}')
+                # test_111 = model(test_11[0], torch.flip(test[-1], dims=[-1]))
+                # generated111 = np.transpose(test_111[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
+                # generated111 = cv2.cvtColor(generated111, cv2.COLOR_BGR2RGB)
+                # cv2.imwrite("gen111.png", generated111*255)
                 
-                test_1111 = model(test_111[0], torch.tensor([0.9529, 0.0471]).unsqueeze(0).to(device).float())
-                generated1111 = np.transpose(test_1111[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
-                generated1111 = cv2.cvtColor(generated1111, cv2.COLOR_BGR2RGB)
-                cv2.imwrite("gen1111.png", generated1111*255)
+                # print(f'gen111 {model(test_111[0])[-1]}')
                 
-                print(f'gen1111 {model(test_1111[0])[-1]}')
+                # test_1111 = model(test_111[0], torch.flip(test[-1], dims=[-1]))
+                # generated1111 = np.transpose(test_1111[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
+                # generated1111 = cv2.cvtColor(generated1111, cv2.COLOR_BGR2RGB)
+                # cv2.imwrite("gen1111.png", generated1111*255)
                 
-                test_11111 = model(test_1111[0], torch.tensor([0.9529, 0.0471]).unsqueeze(0).to(device).float())
-                generated11111 = np.transpose(test_11111[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
-                generated11111 = cv2.cvtColor(generated11111, cv2.COLOR_BGR2RGB)
-                cv2.imwrite("gen11111.png", generated11111*255)
+                # print(f'gen1111 {model(test_1111[0])[-1]}')
                 
-                print(f'gen11111 {model(test_11111[0])[-1]}')
+                # test_11111 = model(test_1111[0], torch.flip(test[-1], dims=[-1]))
+                # generated11111 = np.transpose(test_11111[0].squeeze().detach().cpu().numpy(), (1, 2, 0))
+                # generated11111 = cv2.cvtColor(generated11111, cv2.COLOR_BGR2RGB)
+                # cv2.imwrite("gen11111.png", generated11111*255)
+                
+                # print(f'gen11111 {model(test_11111[0])[-1]}')
                 
                 
                 true_label = true_label.float().to(device)
                 true_labels.append(true_label.detach().cpu().numpy())
                 # Forward pass
-                x_mu, z, z_mu, z_log_var, labels = model(data)
+                x_reconstruction, z, z_mu, z_log_var, labels = model(data)
                 latent = z
                 all_z.append(latent.detach().cpu().numpy())
                 all_labels.append(labels.detach().cpu().numpy())
@@ -232,8 +250,9 @@ def main(args: DictConfig) -> None:
     #Loading the pretrained weight of sac agent.
     # agent.load_params(args.Imagination_General.agent_checkpoint)
     
-    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim]).to(device)
-    model.load("models/m2_vae/2024-12-26_19-00-14_V2ND3K/m2_vae.pth")
+    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.h_dim, \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim]).to(device)
+    model.load(model_dir)
     model.to(device)
     model.eval()
     
@@ -248,8 +267,13 @@ def main(args: DictConfig) -> None:
     
     # Visualization of the latent space 
     data_dir = f'visualizations/m2_vae'
+    viz = Visualizer(model, device, root=f'{data_dir}/')
     os.makedirs(data_dir, exist_ok=True)
     latent, labels = visualize_latent_space(model, imagination_net, train_loader, device, method='pca', save_path=data_dir)
+    
+    for batch, labels in train_loader:
+        break
+    viz.reconstructions(data=batch, label=labels.to(device))
     # latent = visualize_latent_space(model, dataloader, device, latent, labels, method='tsne', save_path=data_dir)
     
 if __name__ == "__main__":

@@ -1,3 +1,4 @@
+import cv2
 import json
 import torch
 import warnings
@@ -36,15 +37,43 @@ class ImaginationNet(nn.Module):
         self.input_dim = env.observation_space['image'].shape[-1]
         self.vae = vae
         hidden_layers = config.Imagination_Network.hidden_layers
-        self.encoder = MLP(input_size = self.input_dim,
-                           output_size = config.Imagination_Network.output_dim,
-                           hidden_sizes = hidden_layers,
-                           output_activation = F.relu,
-                           dropout_prob = 0.0)
-        self.fc1 = Linear(in_dim = config.Imagination_Network.output_dim, 
-                          out_dim = self.input_dim, post_activation=torch.relu)
-        self.fc2 = Linear(in_dim = config.Imagination_Network.output_dim, 
-                          out_dim = self.input_dim, post_activation=torch.relu)
+        conv1 = CNNLayer(self.input_dim, 32, 5, 2)
+        conv2 = CNNLayer(32, 64, 5, 2)
+        conv3 = CNNLayer(64, 64, 3)
+        conv_feature = Linear(1600, config.Imagination_Network.output_dim)
+        self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
+        
+        self.fc_decoder1 = Linear(config.Imagination_Network.output_dim, 256)
+        self.fc_decoder2 = Linear(256, 1600)
+        
+        self.deconv1 = nn.Sequential(
+            # First layer: Upsample to 16x16
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1),  # 64x3x3 -> 32x16x16
+            nn.LeakyReLU(),
+            
+            # Second layer: Upsample to 40x40
+            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=0),  # 32x16x16 -> 3x40x40
+            nn.LeakyReLU(),  # Optional: Apply activation for output normalization
+            
+            # Third layer: Upsample to 40x40
+            nn.ConvTranspose2d(16, self.input_dim, kernel_size=4, stride=2, padding=0),  # 32x16x16 -> 3x40x40
+            nn.LeakyReLU()  # Optional: Apply activation for output normalization
+        )
+        
+        self.deconv2 = nn.Sequential(
+            # First layer: Upsample to 16x16
+            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1),  # 64x3x3 -> 32x16x16
+            nn.LeakyReLU(),
+            
+            # Second layer: Upsample to 40x40
+            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=0),  # 32x16x16 -> 3x40x40
+            nn.LeakyReLU(),  # Optional: Apply activation for output normalization
+            
+            # Third layer: Upsample to 40x40
+            nn.ConvTranspose2d(16, self.input_dim, kernel_size=4, stride=2, padding=0),  # 32x16x16 -> 3x40x40
+            nn.LeakyReLU()  # Optional: Apply activation for output normalization
+        )
+        
         self.agent = agent
         self.ce_loss = nn.CrossEntropyLoss(reduction='mean')
         self.mse_loss = nn.MSELoss(reduction='mean')
@@ -78,28 +107,28 @@ class ImaginationNet(nn.Module):
         centroid_losses = 0.0
         # Forward pass through SAC agent for original state
         agent_action = self.agent.actor_local(state).to(state.device)  # Get agent's action for original state
-        # # Class probabilities from the VAE for the original state
+        # Class probabilities from the VAE for the original state
         _, _, _, _, state_class_prob = self.vae(state)
 
-        # # Prepare targets for the two classes (target distributions)
-        # max_indices = state_class_prob.argmax(dim=1)
-        # target1 = torch.zeros_like(state_class_prob)
-        # target2 = torch.zeros_like(state_class_prob)
+        # Prepare targets for the two classes (target distributions)
+        max_indices = state_class_prob.argmax(dim=1)
+        target1 = torch.zeros_like(state_class_prob)
+        target2 = torch.zeros_like(state_class_prob)
 
-        # # Assign probabilities based on max indices
-        # target1[max_indices == 0] = state_class_prob[max_indices == 0]
-        # target2[max_indices == 0] = 1 - state_class_prob[max_indices == 0]
-        # target2[max_indices == 1] = state_class_prob[max_indices == 1]
-        # target1[max_indices == 1] = 1 - state_class_prob[max_indices == 1]
+        # Assign probabilities based on max indices
+        target1[max_indices == 0] = state_class_prob[max_indices == 0]
+        target2[max_indices == 0] = 1 - state_class_prob[max_indices == 0]
+        target2[max_indices == 1] = state_class_prob[max_indices == 1]
+        target1[max_indices == 1] = 1 - state_class_prob[max_indices == 1]
 
         # # Stack targets for each imagined state
-        # target_distributions = torch.stack((target1, target2), dim=0)
+        target_distributions = torch.stack((target1, target2), dim=0)
         
-        entropy = compute_entropy(state_class_prob.detach().cpu().numpy())
-        max_entropy = np.log(state_class_prob.shape[-1])
+        # entropy = compute_entropy(state_class_prob.detach().cpu().numpy())
+        # max_entropy = np.log(state_class_prob.shape[-1])
         # Weighting factor (inverse of normalized entropy)
-        weight = 1 - (entropy / max_entropy)
-        weight = torch.tensor(weight).unsqueeze(-1).to(device)
+        # weight = 1 - (entropy / max_entropy)
+        # weight = torch.tensor(weight).unsqueeze(-1).to(device)
         # Loss for each imagined state
         for i in range(self.num_goals):
             imagined_state = imagined_states[:, i, :]
@@ -111,25 +140,27 @@ class ImaginationNet(nn.Module):
             action_loss = F.mse_loss(imagined_action, agent_action)
             
             # 3. Class consistency loss
-            target = torch.stack([F.one_hot(torch.tensor(i), num_classes=self.num_goals).float() for _ in range(imagined_state.shape[0])]).to(device)
-            target = weight * target + (1 - weight) * torch.full_like(target, 1/self.num_goals).to(device)
+            # target = torch.stack([F.one_hot(torch.tensor(i), num_classes=self.num_goals).float() for _ in range(imagined_state.shape[0])]).to(device)
+            # target = weight * target + (1 - weight) * torch.full_like(target, 1/self.num_goals).to(device)
             _, img_z, _, _, imagined_state_class = self.vae(imagined_state)
-            class_consistency_loss = F.binary_cross_entropy(imagined_state_class, target.float())
+            # class_consistency_loss = F.binary_cross_entropy(imagined_state_class, target)
+            class_consistency_loss = F.binary_cross_entropy(imagined_state_class, target_distributions[i,...])
             
             # #Forcing the centroid of the imagined state to the centroid output from GMM
             # centroid = self.centroid[f'Goal_{i}']
             # centroid_loss = F.mse_loss(torch.tensor(centroid).unsqueeze(0).to(device), img_z)
             
             # Aggregate losses
-            current_weight = anneal_coefficient(epoch, self.config.Imagination_Network.epoch, 0, 0.1, 100)
+            # current_weight = anneal_coefficient(epoch, self.config.Imagination_Network.epoch, 0.5, 1, 100)
+            current_weight = 0.0
             # total_loss += 1.00 * class_consistency_loss + current_weight * prox_loss + current_weight * action_loss
-            total_loss += 1.00 * class_consistency_loss + 0.1 * prox_loss + 0.1 * action_loss
+            total_loss += 1.00 * class_consistency_loss + 0.10 * prox_loss + current_weight * action_loss
             class_loss += class_consistency_loss
             policy_loss += action_loss
             proximity_loss += prox_loss
             # centroid_losses += centroid_loss
         # Return average loss across all imagined states
-        return total_loss, class_loss, policy_loss, proximity_loss, centroid_losses
+        return total_loss, class_loss, policy_loss, proximity_loss, current_weight
         
     def forward(self, state):
         """
@@ -144,9 +175,12 @@ class ImaginationNet(nn.Module):
             state = torch.tensor(state).float().unsqueeze(0).to(device)
         if len(state.shape) == 1:
             state = state.unsqueeze(0)
-        features = self.encoder(state)
-        differential_state1 = self.fc1(features)
-        differential_state2 = self.fc2(features)
+        encoder_features = self.feature_encoder(state)
+        decoder_input = self.fc_decoder1(encoder_features[0])
+        decoder_input = self.fc_decoder2(decoder_input)
+        decoder_input = decoder_input.view(decoder_input.shape[0], 64, 5, 5)
+        differential_state1 = self.deconv1(decoder_input)
+        differential_state2 = self.deconv2(decoder_input)
         return torch.stack([differential_state1, differential_state2], dim = 1)
     
     def save(self, path):
@@ -157,9 +191,11 @@ class ImaginationNet(nn.Module):
             path (str): File path to save the model.
         """
         params = {
-        "feature_net": self.encoder.state_dict(),
-        "fc1" : self.fc1.state_dict(),
-        "fc2" : self.fc2.state_dict(),
+        "feature_encoder": self.feature_encoder.state_dict(),
+        "fc_decoder1" : self.fc_decoder1.state_dict(),
+        "fc_decoder2" : self.fc_decoder2.state_dict(),
+        "deconv1" : self.deconv1.state_dict(),
+        "deconv2" : self.deconv2.state_dict(),
         }
         torch.save(params, path)
         print(f"[INFO] Model saved to {path}")
@@ -172,7 +208,9 @@ class ImaginationNet(nn.Module):
             path (str): File path from which to load the model.
         """
         params = torch.load(path, map_location=device)
-        self.encoder.load_state_dict(params["feature_net"])
-        self.fc1.load_state_dict(params["fc1"])
-        self.fc2.load_state_dict(params["fc2"])
+        self.feature_encoder.load_state_dict(params["feature_encoder"])
+        self.fc_decoder1.load_state_dict(params["fc_decoder1"])
+        self.fc_decoder2.load_state_dict(params["fc_decoder2"])
+        self.deconv1.load_state_dict(params["deconv1"])
+        self.deconv2.load_state_dict(params["deconv2"])
         print(f"[INFO] Model loaded from {path}")

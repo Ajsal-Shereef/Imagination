@@ -32,8 +32,8 @@ class Perceptron(nn.Module):
 
         return x
 
-class Encoder(nn.Module):
-    def __init__(self, dims, sample_layer=GaussianSample):
+class FeatureEncoder(nn.Module):
+    def __init__(self, dims):
         """
         Inference network
 
@@ -46,29 +46,34 @@ class Encoder(nn.Module):
            given by the number of neurons on the form
            [input_dim, [hidden_dims], latent_dim].
         """
-        super(Encoder, self).__init__()
+        super(FeatureEncoder, self).__init__()
 
-        [input_dim, z_dim] = dims
+        [input_dim, h_dim] = dims
         conv1 = CNNLayer(input_dim, 32, 5, 2)
         conv2 = CNNLayer(32, 64, 5, 2)
         conv3 = CNNLayer(64, 64, 3)
-        conv_feature = Linear(1600, 256)
+        conv_feature = Linear(1600, h_dim)
         self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
-        self.sample = sample_layer(256, z_dim)
         
 
     def forward(self, x):
-        x = self.feature_encoder(x)
-        # if not self.training:
-        #     self.sample.training = False
-        return self.sample(x[0])
+        return self.feature_encoder(x)
+    
+# class FiLMLayer(nn.Module):
+#     def __init__(self, input_dim, feature_dim):
+#         super(FiLMLayer, self).__init__()
+#         self.gamma = nn.Linear(input_dim, feature_dim)
+#         self.beta = nn.Linear(input_dim, feature_dim)
 
+#     def forward(self, x, y):
+#         gamma = self.gamma(y)
+#         beta = self.beta(y)
+#         return gamma.view(-1, 1, 1, 1) * x + beta.view(-1, 1, 1, 1)
 
 class Decoder(nn.Module):
     def __init__(self, dims):
         """
         Generative network
-
         Generates samples from the original distribution
         p(x) by transforming a latent representation, e.g.
         by finding p_θ(x|z).
@@ -79,35 +84,89 @@ class Decoder(nn.Module):
         """
         super(Decoder, self).__init__()
 
-        [z_dim, y_dim, x_dim] = dims
+        [z_dim, y_dim, h_dim, x_dim] = dims
         self.z_dim = z_dim
         self.num_goals = y_dim
-        # self.film = FiLMLayer(z_dim, z_dim)
+        self.fc_cnn1 = Linear(z_dim, h_dim)
+        self.fc_cnn2 = Linear(h_dim, 1600)
+
+        # FiLM layers for conditioning
+        self.film1 = FiLMLayer(1600, y_dim)
+        self.film2 = FiLMLayer(32*9*9, y_dim)
+        self.film3 = FiLMLayer(16*19*19, y_dim)
+
+        # Transposed convolutional layers for upsampling
+        self.deconv1 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1)  # 64x5x5 -> 32x9x9
+        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=0)  # 32x16x16 -> 16x19x19
+        self.deconv3 = nn.ConvTranspose2d(16, x_dim, kernel_size=4, stride=2, padding=0)  # 16x40x40 -> x_dimx40x40
         
-        self.fc_cnn1 = Linear(z_dim*2, 256)
-        self.fc_cnn2 = Linear(256, 1600)
-        self.net = nn.Sequential(
-            # First layer: Upsample to 16x16
-            nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1),  # 64x3x3 -> 32x16x16
-            nn.ReLU(),
-            
-            # Second layer: Upsample to 40x40
-            nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=0),  # 32x16x16 -> 3x40x40
-            nn.LeakyReLU(),  # Optional: Apply activation for output normalization
-            
-            # Third layer: Upsample to 40x40
-            nn.ConvTranspose2d(16, x_dim, kernel_size=4, stride=2, padding=0),  # 32x16x16 -> 3x40x40
-            nn.LeakyReLU()  # Optional: Apply activation for output normalization
-        )
+        # Activation function
+        self.intermediate_activation = nn.LeakyReLU()
+        self.last_activation = nn.Sigmoid()
+
 
     def forward(self, z, y):
-        action_encoded = torch.tensor(custom_soft_action_encoding(y, self.num_goals, self.z_dim)).to(device).float()
-        x = torch.cat((z, action_encoded), 1)
-        # x = self.film(z,action_encoded)
-        linear_feature = self.fc_cnn1(x)
+        # Create soft action encoding for labels
+        # y = torch.tensor(custom_soft_action_encoding(y, self.num_goals, self.z_dim)).to(z.device).float()
+
+        # Initial linear layers
+        linear_feature = self.fc_cnn1(z)
         linear_feature = self.fc_cnn2(linear_feature)
-        linear_feature = linear_feature.view(linear_feature.shape[0], 64, 5, 5)
-        return self.net(linear_feature)
+
+        # Condition each layer with FiLM
+        x = self.film1(linear_feature, y)
+        x = self.intermediate_activation(self.deconv1(x.view(-1, 64, 5, 5)))  # ConvTranspose2d(64 -> 32)
+        x = self.film2(x.view(-1, 32*9*9), y)
+        x = self.intermediate_activation(self.deconv2(x.view(-1, 32, 9, 9)))  # ConvTranspose2d(32 -> 16)
+        x = self.film3(x.view(-1, 16*19*19), y)
+        x = self.last_activation(self.deconv3(x.view(-1, 16, 19, 19)))  # ConvTranspose2d(16 -> x_dim)
+        return x
+
+
+# class Decoder(nn.Module):
+#     def __init__(self, dims):
+#         """
+#         Generative network
+
+#         Generates samples from the original distribution
+#         p(x) by transforming a latent representation, e.g.
+#         by finding p_θ(x|z,y).
+
+#         :param dims: dimensions of the networks
+#             given by the number of neurons on the form
+#             [latent_dim, [hidden_dims], input_dim].
+#         """
+#         super(Decoder, self).__init__()
+
+#         [z_dim, y_dim, x_dim] = dims
+#         self.z_dim = z_dim
+#         self.num_goals = y_dim
+#         # self.film = FiLMLayer(z_dim, z_dim)
+        
+#         self.fc_cnn1 = Linear(z_dim*2, 256)
+#         self.fc_cnn2 = Linear(256, 1600)
+#         self.net = nn.Sequential(
+#             # First layer: Upsample to 16x16
+#             nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1),  # 64x3x3 -> 32x16x16
+#             nn.LeakyReLU(),
+            
+#             # Second layer: Upsample to 40x40
+#             nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=0),  # 32x16x16 -> 3x40x40
+#             nn.LeakyReLU(),  # Optional: Apply activation for output normalization
+            
+#             # Third layer: Upsample to 40x40
+#             nn.ConvTranspose2d(16, x_dim, kernel_size=4, stride=2, padding=0),  # 32x16x16 -> 3x40x40
+#             nn.LeakyReLU()  # Optional: Apply activation for output normalization
+#         )
+
+#     def forward(self, z, y):
+#         action_encoded = torch.tensor(custom_soft_action_encoding(y, self.num_goals, self.z_dim)).to(device).float()
+#         x = torch.cat((z, action_encoded), 1)
+#         # x = self.film(z,action_encoded)
+#         linear_feature = self.fc_cnn1(x)
+#         linear_feature = self.fc_cnn2(linear_feature)
+#         linear_feature = linear_feature.view(linear_feature.shape[0], 64, 5, 5)
+#         return self.net(linear_feature)
 
 
 class VariationalAutoencoder(nn.Module):

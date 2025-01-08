@@ -46,10 +46,9 @@ def train_imagination_net(config,
             state = state.float().to(device)
             optimizer.zero_grad()
             imagined_state = imagination_net(state)
-            loss, class_loss, policy_loss, proximity_loss, centroid_loss  = imagination_net.compute_loss(state, imagined_state, epoch)
+            loss, class_loss, policy_loss, proximity_loss, weight  = imagination_net.compute_loss(state, imagined_state, epoch)
             loss.backward()
             optimizer.step()
-            previous_imagined_state = imagined_state
             # Accumulate losses
             total_loss += loss.item()
             total_class_loss += class_loss.item()
@@ -66,7 +65,7 @@ def train_imagination_net(config,
                    "Class loss" : average_class_loss,
                    "Policy loss" : average_policy_loss,
                    "Proximity loss" : average_proximity_loss,
-                   "Eentroid_loss" : centroid_loss}, step = epoch)
+                   "Weight" : weight}, step = epoch)
         # Save checkpoint at specified intervals
         if epoch % checkpoint_interval == 0:
             checkpoint_path = os.path.join(checkpoint_dir, f'imagination_net_epoch_{epoch}.tar')
@@ -81,7 +80,8 @@ def main(args: DictConfig) -> None:
     # wandb.config.update(OmegaConf.to_container(args, resolve=True))
     #Loading the dataset
     # states = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/states.pkl')
-    next_states = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/next_states.pkl')
+    next_states = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/data.pkl')
+    next_states = [i/255 for i in next_states]
     # captions = get_data(f'{args.Imagination_General.datapath}/{args.General.env}/caption_encoded.pkl')
     # Initialize dataset and dataloader
     dataset = Dataset(next_states)
@@ -103,7 +103,7 @@ def main(args: DictConfig) -> None:
                          args.policy_network_cfg, '')
     else:
         agent = SAC(args,
-                    state_size = env.observation_space.shape[0],
+                    input_dim = env.observation_space['image'].shape[-1],
                     action_size = env.action_space.n,
                     device=device,
                     buffer_size = args.Imagination_General.buffer_size)
@@ -122,7 +122,7 @@ def main(args: DictConfig) -> None:
     # for params in captioner.parameters():
     #     params.requires_grad = False
     
-    vae = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim, args.M2_Network.encoder_hidden_dim]).to(device)
+    vae = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim]).to(device)
     vae.load(args.Imagination_General.vae_checkpoint)
     vae.to(device)
     vae.eval()
@@ -131,7 +131,7 @@ def main(args: DictConfig) -> None:
         params.requires_grad = False
     
     # Create data directory if it doesn't exist
-    model_dir = 'models/imagination_net'
+    model_dir = create_dump_directory("models/imagination_net")
     os.makedirs(model_dir, exist_ok=True)
     
     #Train imagination Net

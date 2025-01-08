@@ -226,17 +226,17 @@ def monte_carlo_entropy(alpha, mu, sigma, num_samples=10000):
 
 def collect_random(env, dataset, num_samples=200):
     state, info = env.reset()
-    state = np.transpose(state['image'], (2, 0, 1))
+    state = np.transpose(state['image'], (2, 0, 1))/255
     for _ in range(num_samples):
         action = env.action_space.sample()
         next_state, reward, truncated, terminated, _ = env.step(action)
-        next_state = np.transpose(next_state['image'], (2, 0, 1))
+        next_state = np.transpose(next_state['image'], (2, 0, 1))/255
         done = truncated + terminated
         dataset.add(state, action, reward, next_state, done)
         state = next_state
         if done:
             state, info = env.reset()
-            state = np.transpose(state['image'], (2, 0, 1))
+            state = np.transpose(state['image'], (2, 0, 1))/255
             
 def write_video(frames, episode, dump_dir, frameSize = (224, 224)):
     os.makedirs(dump_dir, exist_ok=True)

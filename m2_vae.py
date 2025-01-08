@@ -1,8 +1,10 @@
+import cv2
 import wandb
 import json
 import hydra
 import torch
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 from tqdm import tqdm
 from utils.utils import *
@@ -16,6 +18,7 @@ from omegaconf import DictConfig, OmegaConf
 from architectures.m2_vae.variational import SVI
 from scipy.optimize import linear_sum_assignment
 from sklearn.model_selection import train_test_split
+from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 from architectures.m2_vae.dgm import DeepGenerativeModel
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -53,10 +56,11 @@ def main(args: DictConfig) -> None:
     class_probs = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/class_prob.pkl')
     
     unlabelled_data, labelled_data, unused_labels, labels = train_test_split(datasets, class_probs, test_size=0.20, random_state=42)
-    print(len(labelled_data))
+    print("Number of labelled data: ", len(labelled_data))
     
     #Create a model dump directory
     model_dir = create_dump_directory("models/m2_vae")
+    print("Dump dir: ", model_dir)
     
     # alpha = 0.1 * len(unlabelled_data) / len(labelled_data)
     alpha = 100
@@ -66,54 +70,67 @@ def main(args: DictConfig) -> None:
     unlabelled_data_loader = DataLoader(unlabelled_data, batch_size=900, shuffle=True)
     labelled_data_loader = DataLoader(labelled_data, batch_size=900, shuffle=True)
     #Creating the model and the optimizer
-    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim]).to(device)
+    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.h_dim, \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim]).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
     
+    scheduler_model = CosineAnnealingLR(optimizer, T_max=args.M2_Network.epochs)
+    
     wandb.watch(model)
+    wandb.config.update(OmegaConf.to_container(args, resolve=True))
     epoch_bar = tqdm(range(args.M2_Network.epochs), desc="Training Progress", unit="epoch")
     for epoch in epoch_bar:
         total_loss, accuracy_labeled, accuracy_unlabeled = (0, 0, 0)
-        classification_losses, reconstruction_errors, kl_losses  = 0, 0, 0
+        classification_losses, reconstruction_errors, z_kl_losses, u_kl_losses  = 0, 0, 0, 0
         L_losses, U_losses = 0, 0
         iter = 0
         for (unlabelled, unused_labels), (labelled, labels) in zip(unlabelled_data_loader, cycle(labelled_data_loader)):
             x, y, u, uy = Variable(labelled).to(device).float(), Variable(labels).to(device).float(), Variable(unlabelled).to(device).float(), Variable(unused_labels).to(device).float()
 
-            labelled_reconstruction, x_latent, mu, log_var, _ = model(x,y)
+            labelled_reconstruction, x_latent, mu_labelled, log_var, _ = model(x,y)
+            kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, 0.01, 0.1, 150, True)
+            total_loss_L, cls_loss = model.L(x, mu_labelled, log_var, x_latent, y, kl_divergence_weight)
+            # L = model.L(x, y, labelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
             
-            # kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, 0.1, 1, 100, True)
-            # L = model.L(x, y, labelled_reconstruction, mu, log_var, kl_divergence_weight)
-            L = model.L(x, y, labelled_reconstruction, mu, log_var)
-            
-            # dummy_y = torch.full((u.shape[0], 2), 0.5).to(device)
-            unlabelled_reconstruction, u_latent, mu, log_var, y_pred_unlabelled = model(u)
-            # reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var, kl_divergence_weight)
-            reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var)
+            unlabelled_reconstruction, u_latent, mu_unlabelled, log_var, y_pred_unlabelled = model(u)
+            total_loss_U, recon_loss, kl_z, kl_c = model.U(u, mu_unlabelled, log_var, u_latent, y_pred_unlabelled, kl_divergence_weight)
+            # reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
             
             #Classification loss for labelled data
             # Regular cross entropy
-            y_pred_labelled = model.classify(x_latent)
-            classification_loss = torch.sum(y * torch.log(y_pred_labelled + 1e-8), dim=1).mean()
-            #The reconstructed tmage should also produce the same label
+            # y_pred_labelled = model.classify(x_latent)
+            # # supervised_loss = torch.sum(y * torch.log(y_pred_labelled + 1e-8), dim=1).mean()
+            # supervised_loss = F.mse_loss(y_pred_labelled, y)
+            # #The reconstructed tmage should also produce the same label
             # y_pred_labelled_reconstructed = model(labelled_reconstruction)
-            # classification_loss_labeled_reconstructed = torch.sum(y * torch.log(y_pred_labelled_reconstructed[-1] + 1e-8), dim=1).mean()
-            # classification_loss = (classification_loss_labeled + classification_loss_loss_labeled_reconstructed) / 2
-            #The negative sign infront of L and U is as in the paper. model.U calculate the U.
+            # classification_loss_labeled_reconstructed = F.mse_loss(y_pred_labelled_reconstructed[-1], y)
+            # # classification_loss_labeled_reconstructed = torch.sum(y * torch.log(y_pred_labelled_reconstructed[-1] + 1e-8), dim=1).mean()
+            # y_pred_unlabelled_reconstructed = model(unlabelled_reconstruction)
+            # classification_loss_unlabeled_reconstructed = F.mse_loss(y_pred_unlabelled_reconstructed[-1], y_pred_unlabelled)
+            # # classification_loss_unlabeled_reconstructed = torch.sum(y_pred_unlabelled * torch.log(y_pred_unlabelled_reconstructed[-1] + 1e-8), dim=1).mean()
             
-            #Linearly descrese the alpha
+            # auxiliary_classification_loss_weight = anneal_coefficient(epoch, args.M2_Network.epochs, 0.0, 0.5, 100, True)
+            # classification_loss = supervised_loss + auxiliary_classification_loss_weight*classification_loss_labeled_reconstructed + \
+            #     auxiliary_classification_loss_weight*classification_loss_unlabeled_reconstructed
+            # #The negative sign infront of L and U is as in the paper. model.U calculate the U.
+            
+            # #Linearly descrese the alpha
             # alpha = anneal_coefficient(epoch, args.M2_Network.epochs, 500, 50, 200, False)
-            J_alpha = -L - alpha * classification_loss - U
-
-            J_alpha.backward()
-            optimizer.step()
+            J_alpha = total_loss_L + total_loss_U
             optimizer.zero_grad()
-
+            J_alpha.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+            
+            scheduler_model.step(J_alpha)
+            
             total_loss += J_alpha.item()
-            classification_losses += classification_loss.item()
-            reconstruction_errors += reconstruction_error
-            kl_losses += kl_loss
-            L_losses += -L.item()
-            U_losses += -U.item()
+            classification_losses += cls_loss.item()
+            reconstruction_errors += recon_loss.item()
+            z_kl_losses += kl_z.item()
+            u_kl_losses+= kl_c.item()
+            L_losses += total_loss_L.item()
+            U_losses += total_loss_U.item()
             
             # # Mask to identify rows where the target is not [0.5, 0.5]
             # mask = ~(torch.all(y == 0.5, dim=1))
@@ -125,18 +142,24 @@ def main(args: DictConfig) -> None:
             # # Compute accuracy only for valid rows
             # acc = torch.mean((valid_y_pred == valid_y).float())
             # accuracy += acc.item()
+            h = model.encoder(x)
+            y_pred_labelled = model.classify(h[0])
             accuracy_labeled += torch.mean((torch.max(y_pred_labelled, 1)[1].data == torch.max(y, 1)[1].data).float())
             accuracy_unlabeled += torch.mean((torch.max(y_pred_unlabelled, 1)[1].data == torch.max(uy, 1)[1].data).float())
             iter += 1
+        if epoch%args.M2_Network.save_freequency == 0:
+            model.save(model_dir, epoch)
         wandb.log({"Loss" : total_loss/len(unlabelled_data_loader),
-                   "Classification_loss" : -classification_losses/len(unlabelled_data_loader),
-                   "reconstruction_error" : reconstruction_error/len(unlabelled_data_loader),
-                   "kl_loss" : kl_losses/len(unlabelled_data_loader),
+                   "Classification_loss" : classification_losses/len(unlabelled_data_loader),
+                   "Reconstruction_error" : reconstruction_errors/len(unlabelled_data_loader),
+                   "Z_kl_loss" : z_kl_losses/len(unlabelled_data_loader),
+                   "U_kl_loss" : u_kl_losses/len(unlabelled_data_loader),
                    "L loss" : L_losses/len(unlabelled_data_loader),
                    "U loss" : U_losses/len(unlabelled_data_loader),
                    "Accuracy" : accuracy_labeled/len(unlabelled_data_loader),
                    "Unlabelled Accuracy" : accuracy_unlabeled/len(unlabelled_data_loader),
-                   "Alpha" : alpha}, step=epoch)
+                   "Current Learning rate" : optimizer.param_groups[0]['lr'],
+                   "KL divergence weight" : kl_divergence_weight}, step=epoch)
         epoch_bar.set_description(f"Accuracy {accuracy_labeled/len(unlabelled_data_loader)} Loss {total_loss/len(unlabelled)}")
     model.save(model_dir)
     model.eval()
