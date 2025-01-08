@@ -51,6 +51,8 @@ class DeepGenerativeModel(nn.Module):
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
         self.decoder = Decoder([self.z_dim, self.y_dim, self.h_dim, self.x_dim])
         self.classifier = Classifier([self.h_dim, self.y_dim, self.classifier_hidden])
+        
+        self.prior_c_logit = nn.Parameter(nn.Parameter(torch.full((self.y_dim,), 1 / self.y_dim)))
 
 
     def forward(self, x, y=None):
@@ -139,7 +141,8 @@ class DeepGenerativeModel(nn.Module):
         # KL divergence for c (per sample)
         # Assuming uniform prior p(c)
         log_q_c = torch.log(q_c_probs + 1e-8)  # (B, num_classes)
-        kl_c_per_sample = torch.sum(q_c_probs * (log_q_c - torch.log(torch.tensor(1.0 / self.y_dim, device=device))), dim=1)  # (B,)
+        self.prior_c = torch.softmax(self.prior_c_logit, dim=0)
+        kl_c_per_sample = torch.sum(q_c_probs * (log_q_c - torch.log(self.prior_c)), dim=1)  # (B,)
         kl_c = kl_c_per_sample.mean()
 
         # Total VAE loss
@@ -196,7 +199,8 @@ class DeepGenerativeModel(nn.Module):
         # KL divergence for c (per sample)
         # Assuming uniform prior p(c)
         log_q_c = torch.log(q_c_probs + 1e-8)  # (B, num_classes)
-        kl_c_per_sample = torch.sum(q_c_probs * (log_q_c - torch.log(torch.tensor(1.0 / self.y_dim, device=device))), dim=1)  # (B,)
+        self.prior_c = torch.softmax(self.prior_c_logit, dim=0)
+        kl_c_per_sample = torch.sum(q_c_probs * (log_q_c - torch.log(self.prior_c)), dim=1)  # (B,)
         kl_c = kl_c_per_sample.mean()
 
         # Total VAE loss
