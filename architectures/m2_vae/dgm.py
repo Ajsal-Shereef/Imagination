@@ -52,7 +52,7 @@ class DeepGenerativeModel(nn.Module):
         self.encoder = FeatureEncoder([self.x_dim, self.h_dim])
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
         self.decoder = Decoder([self.z_dim, self.y_dim, self.h_dim, self.x_dim])
-        self.classifier = Classifier([self.h_dim, self.y_dim, self.classifier_hidden])
+        self.classifier = GaussianSample(self.h_dim, self.y_dim)
         
         self.register_buffer('c_prior_mu', torch.full((self.y_dim,), 1.0 / self.y_dim))
         self.register_buffer('c_prior_logvar', torch.zeros(self.y_dim))  # Log variance of 0
@@ -61,19 +61,22 @@ class DeepGenerativeModel(nn.Module):
     def forward(self, x, y=None):
         # Add label and data and generate latent variable
         h = self.encoder(x)
-        z, z_mu, z_log_var = self.z_latent(h[0])
-        mu_c, logvar_c = self.classify(h[0]) #For analysis on classification, need to take softmax over dim -1 to get consistent probability
+        z_latent, z_mu, z_log_var = self.z_latent(h[0])
+        c_latent, mu_c, logvar_c = self.classify(h[0]) #For analysis on classification, need to take softmax over dim -1 to get consistent probability
         # Reconstruct data point from latent data and label
         if y is not None:
-            x_reconstructed = self.decoder(z, y)
+            x_reconstructed = self.decoder(z_latent, y)
         else:
-            x_reconstructed = self.decoder(z, mu_c)
+            if self.training:
+                x_reconstructed = self.decoder(z_latent, c_latent)
+            else:
+                x_reconstructed = self.decoder(z_mu, mu_c)
 
-        return x_reconstructed, z, z_mu, z_log_var, mu_c, logvar_c
+        return x_reconstructed, z_latent, z_mu, z_log_var, mu_c, logvar_c
 
     def classify(self, h):
-        mu_c, logvar_c = self.classifier(h)
-        return mu_c, logvar_c
+        c_latent, mu_c, logvar_c = self.classifier(h)
+        return c_latent, mu_c, logvar_c
     
     def generate(self, x_input: torch.Tensor, c_cond: torch.Tensor, use_mean_z: bool = True) -> torch.Tensor:
         """
@@ -93,8 +96,6 @@ class DeepGenerativeModel(nn.Module):
             z, mu, logvar = self.z_latent(h[0])
             if use_mean_z:
                 z = mu  # Use mean of q(z|x)
-            else:
-                z = self.reparameterize(mu, logvar)
             x_generated = self.decoder(z, c_cond)
         return x_generated
 
