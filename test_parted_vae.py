@@ -17,7 +17,7 @@ from utils.collect_vae_training_data import collect_data
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_dir = "models/m2_vae/2025-01-08_22-46-34_80MEQH/model.pt"
+model_dir = "models/m2_vae/2025-01-09_11-52-42_ZFJBNS/model.pt"
 
 def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """
@@ -111,10 +111,10 @@ def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[],
                 true_label = true_label.float().to(device)
                 true_labels.append(true_label.detach().cpu().numpy())
                 # Forward pass
-                x_reconstruction, z, z_mu, z_log_var, labels = model(data)
-                latent = z
+                x_reconstructed, x_z, x_z_mu, x_z_log_var, x_mu_c, x_logvar_c = model(data)
+                latent = x_z
                 all_z.append(latent.detach().cpu().numpy())
-                all_labels.append(labels.detach().cpu().numpy())
+                all_labels.append(x_mu_c.detach().cpu().numpy())
                 # Optionally, collect labels or other metadata if available
         all_z = np.concatenate(all_z, axis=0)  # [num_samples, latent_dim]
         all_labels = np.concatenate(all_labels, axis=0)

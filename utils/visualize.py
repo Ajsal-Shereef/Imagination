@@ -27,16 +27,16 @@ class Visualizer:
         # self.model.eval()
         data = data.to(self.device)
         with torch.no_grad():
-            recon_data, z, z_mu, z_log_var, label = self.model(data.float())
+            x_reconstructed, x_z, x_z_mu, x_z_log_var, x_mu_c, x_logvar_c = self.model(data.float())
             label_flipped = torch.flip(label, dims=[-1])
             # label = torch.rand((900,2)).to('cuda')
             # syn_data = torch.rand(data.shape).to('cuda')
-            recon_data_flipped = self.model.generate(data.float(), label_flipped)
+            recon_data_flipped = self.model.generate(data.float(), label_flipped.float())
 
         # Upper half of plot will contain data, bottom half will contain reconstructions
         num_images = size[0] * size[1] // 2
         originals = data[:num_images].cpu()
-        reconstructions = recon_data.view(-1, 3, 40, 40)[:num_images].cpu()
+        reconstructions = x_reconstructed.view(-1, 3, 40, 40)[:num_images].cpu()
         reconstructions_flipped = recon_data_flipped.view(-1, 3, 40, 40)[:num_images].cpu()
         # If there are fewer examples given than spaces available in grid, augment with blank images
         num_examples = originals.size()[0]
