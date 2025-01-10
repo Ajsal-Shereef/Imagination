@@ -88,8 +88,8 @@ def main(args: DictConfig) -> None:
             x, y, u, uy = Variable(labelled).to(device).float(), Variable(labels).to(device).float(), Variable(unlabelled).to(device).float(), Variable(unused_labels).to(device).float()
 
             x_reconstructed, x_z, x_z_mu, x_z_log_var, x_mu_c, x_logvar_c = model(x, y)
-            # kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, 0.01, 0.1, 150, True)
-            kl_divergence_weight = 1
+            kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, 0.01, 1, 150, True)
+            # kl_divergence_weight = 1
             total_loss_L, cls_loss = model.L(x, x_reconstructed, x_z_mu, x_z_log_var, x_mu_c, x_logvar_c, y,\
                                              kl_weight=kl_divergence_weight)
             # L = model.L(x, y, labelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)

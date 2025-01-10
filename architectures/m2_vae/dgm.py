@@ -52,10 +52,10 @@ class DeepGenerativeModel(nn.Module):
         self.encoder = FeatureEncoder([self.x_dim, self.h_dim])
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
         self.decoder = Decoder([self.z_dim, self.y_dim, self.h_dim, self.x_dim])
-        self.classifier = GaussianSample(self.h_dim, self.y_dim)
+        self.classifier = GaussianSample(self.h_dim, self.z_dim)
         
-        self.register_buffer('c_prior_mu', torch.full((self.y_dim,), 1.0 / self.y_dim))
-        self.register_buffer('c_prior_logvar', torch.zeros(self.y_dim))  # Log variance of 0
+        self.register_buffer('c_prior_mu', torch.full((self.z_dim,), 1.0 / self.z_dim))
+        self.register_buffer('c_prior_logvar', torch.zeros(self.z_dim))  # Log variance of 0
 
 
     def forward(self, x, y=None):
@@ -64,13 +64,13 @@ class DeepGenerativeModel(nn.Module):
         z_latent, z_mu, z_log_var = self.z_latent(h[0])
         c_latent, mu_c, logvar_c = self.classify(h[0]) #For analysis on classification, need to take softmax over dim -1 to get consistent probability
         # Reconstruct data point from latent data and label
-        if y is not None:
-            x_reconstructed = self.decoder(z_latent, y)
+        # if y is not None:
+        #     x_reconstructed = self.decoder(z_latent, y)
+        # else:
+        if self.training:
+            x_reconstructed = self.decoder(z_latent, c_latent)
         else:
-            if self.training:
-                x_reconstructed = self.decoder(z_latent, c_latent)
-            else:
-                x_reconstructed = self.decoder(z_mu, mu_c)
+            x_reconstructed = self.decoder(z_mu, mu_c)
 
         return x_reconstructed, z_latent, z_mu, z_log_var, mu_c, logvar_c
 

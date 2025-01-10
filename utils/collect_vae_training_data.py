@@ -258,8 +258,8 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             # obj, caption = generate_caption(p_state['image'])
             next_state, reward, terminated, truncated, info = env.step(action)
             
-            c_frame = cv2.cvtColor(next_state['image'], cv2.COLOR_BGR2RGB)
-            cv2.imwrite("frame.png", c_frame)
+            # c_frame = cv2.cvtColor(next_state['image'], cv2.COLOR_BGR2RGB)
+            # cv2.imwrite("frame.png", c_frame)
             
             next_state = np.transpose(next_state['image'], (2, 0, 1))
             # c_state = env.get_unprocesed_obs()
