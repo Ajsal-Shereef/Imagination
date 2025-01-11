@@ -71,7 +71,8 @@ def main(args: DictConfig) -> None:
     labelled_data_loader = DataLoader(labelled_data, batch_size=900, shuffle=True)
     #Creating the model and the optimizer
     model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
-                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim]).to(device)
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
+                                args.M2_Network.label_loss_weight).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
     
     scheduler_model = CosineAnnealingLR(optimizer, T_max=args.M2_Network.epochs)

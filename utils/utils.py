@@ -83,7 +83,7 @@ def create_dump_directory(path):
     os.makedirs(dump_dir, exist_ok=True)
     return dump_dir
 
-def sample_gumbel_softmax(c_logit, training=True, tau=1):
+def sample_gumbel_softmax(c_logit, training=True, tau=0.1):
     if training:
         gumbel_noise = -torch.log(-torch.log(torch.rand_like(c_logit) + 1e-10) + 1e-10)
         y = F.softmax((c_logit + gumbel_noise) / tau, dim=-1)

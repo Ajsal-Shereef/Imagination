@@ -34,7 +34,7 @@ class Classifier(nn.Module):
 
 
 class DeepGenerativeModel(nn.Module):
-    def __init__(self, dims):
+    def __init__(self, dims, label_weight):
         """
         M2 code replication from the paper
         'Semi-Supervised Learning with Deep Generative Models'
@@ -48,6 +48,7 @@ class DeepGenerativeModel(nn.Module):
         :param dims: dimensions of x, y, z and hidden layers.
         """
         [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden, feature_encoder_channel_dim] = dims
+        self.label_weight = label_weight
         super(DeepGenerativeModel, self).__init__()
         self.encoder = FeatureEncoder([self.x_dim, self.h_dim, feature_encoder_channel_dim])
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
@@ -140,7 +141,11 @@ class DeepGenerativeModel(nn.Module):
         kl_c = self.kl_divergence_c(logits_c)
         label_loss = self.label_loss_function(logits_c, y)
         
-        total_loss = recon_loss + kl_weight*kl_z + 0.01*kl_c + 10*label_loss
+        #Forcing the recosntruction to have the same label
+        x_reconstructed, z_latent, z_mu, z_log_var, c_logits, c = self.forward(x_recon)
+        x_reconstructed_label_loss = self.label_loss_function(c_logits, y)
+        
+        total_loss = recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + x_reconstructed_label_loss
         return total_loss, label_loss
     
     def U(self, x, x_recon, mu_z, logvar_z, logits_c, kl_weight):
