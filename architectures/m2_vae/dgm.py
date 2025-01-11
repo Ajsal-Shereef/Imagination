@@ -4,7 +4,7 @@ import torch.nn.functional as F
 
 from torch.nn import init
 from architectures.mlp import MLP, Linear
-from utils.utils import anneal_coefficient
+from utils.utils import anneal_coefficient, sample_gumbel_softmax
 from architectures.m2_vae.stochastic import GaussianSample
 from architectures.m2_vae.vae import VariationalAutoencoder
 from architectures.m2_vae.distributions import log_standard_categorical
@@ -47,36 +47,42 @@ class DeepGenerativeModel(nn.Module):
         Initialise a new generative model
         :param dims: dimensions of x, y, z and hidden layers.
         """
-        [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden] = dims
+        [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden, feature_encoder_channel_dim] = dims
         super(DeepGenerativeModel, self).__init__()
-        self.encoder = FeatureEncoder([self.x_dim, self.h_dim])
+        self.encoder = FeatureEncoder([self.x_dim, self.h_dim, feature_encoder_channel_dim])
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
         self.decoder = Decoder([self.z_dim, self.y_dim, self.h_dim, self.x_dim])
-        self.classifier = GaussianSample(self.h_dim, self.z_dim)
+        # self.classifier = GaussianSample(self.h_dim, self.z_dim)
+        self.classifier = Linear(self.h_dim, self.y_dim)
         
         self.register_buffer('c_prior_mu', torch.full((self.z_dim,), 1.0 / self.z_dim))
         self.register_buffer('c_prior_logvar', torch.zeros(self.z_dim))  # Log variance of 0
+        
+        self.reconstruction_loss_function = nn.BCELoss(reduction='none')
+        self.label_loss_function = nn.CrossEntropyLoss()
 
 
-    def forward(self, x, y=None):
+    def forward(self, x):
         # Add label and data and generate latent variable
         h = self.encoder(x)
         z_latent, z_mu, z_log_var = self.z_latent(h[0])
-        c_latent, mu_c, logvar_c = self.classify(h[0]) #For analysis on classification, need to take softmax over dim -1 to get consistent probability
+        c_logits = self.classify(h[0]) 
+        c = sample_gumbel_softmax(c_logits, self.training)
         # Reconstruct data point from latent data and label
         # if y is not None:
         #     x_reconstructed = self.decoder(z_latent, y)
         # else:
         if self.training:
-            x_reconstructed = self.decoder(z_latent, c_latent)
+            x_reconstructed = self.decoder(z_latent, c)
         else:
-            x_reconstructed = self.decoder(z_mu, mu_c)
+            x_reconstructed = self.decoder(z_mu, c)
 
-        return x_reconstructed, z_latent, z_mu, z_log_var, mu_c, logvar_c
-
+        return x_reconstructed, z_latent, z_mu, z_log_var, c_logits, c
+    
+    
     def classify(self, h):
-        c_latent, mu_c, logvar_c = self.classifier(h)
-        return c_latent, mu_c, logvar_c
+        c_logits = self.classifier(h)
+        return c_logits
     
     def generate(self, x_input: torch.Tensor, c_cond: torch.Tensor, use_mean_z: bool = True) -> torch.Tensor:
         """
@@ -110,86 +116,126 @@ class DeepGenerativeModel(nn.Module):
     #     x = self.decoder(torch.cat([z, y], dim=1))
     #     return x
     
-    #Loss unction for labelled data
-    def L(self, x, x_recon, mu_z, logvar_z, mu_c, logvar_c, y, sigma2=1.0, sigma_y2=1.0, kl_weight=1):
-        """
-        Computes the loss function for GMVAE
+    def kl_divergence_z(self, mu, logvar):
+        kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
+        return kl.mean()
 
-        Args:
-            x: Input images (B, 3, 40, 40)
-            mu: Mean of q(z|x) (B, latent_dim)
-            logvar: Log variance of q(z|x) (B, latent_dim)
-            z: Sampled latent variables (B, latent_dim)
-            y: Soft labels (B, num_classes), representing p(y|x)
-        Returns:
-            total_loss: The total loss for the batch
-            loss_dict: Dictionary containing individual loss components
-        """
-        batch_size = x.size(0)
-        device = x.device
-
-         # Reconstruction loss (MSE loss)
-        recon_loss = F.mse_loss(x_recon, x, reduction='mean') / (2 * sigma2)
-
+    def kl_divergence_c(self, logits):
+        q_c = F.softmax(logits, dim=-1)                 # [batch_size, num_classes]
+        log_q_c = F.log_softmax(logits, dim=-1)         # [batch_size, num_classes]
+        K = logits.size(-1)                             # Number of classes
+        # Compute log uniform prior probability
+        log_uniform_prob = -torch.log(torch.tensor(K, dtype=torch.float, device=logits.device))
+        kl_per_sample = torch.sum(q_c * (log_q_c - log_uniform_prob), dim=1)    # [batch_size]
+        kl = kl_per_sample.mean()
+        return kl
+    
+    def L(self, x, x_recon, mu_z, logvar_z, y, logits_c, kl_weight):
+        #Reconstruction loss
+        recon_loss = F.mse_loss(x_recon, x, reduction='none')
+        recon_loss = torch.mean(recon_loss.sum(dim=[1, 2, 3]))
         # KL divergence for z
-        kl_z = -0.5 * torch.mean(1 + logvar_z - mu_z.pow(2) - logvar_z.exp())
-
+        kl_z = self.kl_divergence_z(mu_z, logvar_z)
         # KL divergence for c
-        prior_mu_c = self.c_prior_mu.to(device)
-        prior_logvar_c = self.c_prior_logvar.to(device)
-        kl_c = -0.5 * torch.mean(
-            1 + logvar_c - prior_logvar_c - ((mu_c - prior_mu_c).pow(2) + logvar_c.exp()) / prior_logvar_c.exp()
-        )
-
-        # Total VAE loss
-        # Total loss
-        total_loss = recon_loss + kl_weight*kl_z + kl_weight*kl_c
-        # Compute E_q(c|x)[|| y - c ||^2] = || y - mu_c ||^2 + Tr(Sigma_c)
-        diff = y - mu_c
-        sq_diff = diff.pow(2).sum(dim=1)  # (B,)
-        trace_sigma_c = torch.exp(logvar_c).sum(dim=1)  # (B,)
-        expected_sq_diff = sq_diff + trace_sigma_c  # (B,)
-        scalled_class_loss = (expected_sq_diff/(2 * sigma_y2)).mean()
-        # Add label loss to total loss
-        total_loss += scalled_class_loss
-        return total_loss, scalled_class_loss
-
-    # Loss function for unlabeled data
-    def U(self,x, x_recon, mu_z, logvar_z, mu_c, logvar_c, sigma2=1.0,  kl_weight=1):
-        """
-        Computes the loss function for GMVAE
-
-        Args:
-            x: Input images (B, 3, 40, 40)
-            mu: Mean of q(z|x) (B, latent_dim)
-            logvar: Log variance of q(z|x) (B, latent_dim)
-            z: Sampled latent variables (B, latent_dim)
-            q_c_probs: Class probabilities q(c|x) (B, num_classes)
-            y: Soft labels (B, num_classes), representing p(y|x)
-        Returns:
-            total_loss: The total loss for the batch
-            loss_dict: Dictionary containing individual loss components
-        """
-        batch_size = x.size(0)
-        device = x.device
-
-         # Reconstruction loss (MSE loss)
-        recon_loss = F.mse_loss(x_recon, x, reduction='mean') / (2 * sigma2)
-
+        kl_c = self.kl_divergence_c(logits_c)
+        label_loss = self.label_loss_function(logits_c, y)
+        
+        total_loss = recon_loss + kl_weight*kl_z + 0.01*kl_c + label_loss
+        return total_loss, label_loss
+    
+    def U(self, x, x_recon, mu_z, logvar_z, logits_c, kl_weight):
+        #Reconstruction loss
+        recon_loss = F.mse_loss(x_recon, x, reduction='none')
+        recon_loss = torch.mean(recon_loss.sum(dim=[1, 2, 3]))
         # KL divergence for z
-        kl_z = -0.5 * torch.mean(1 + logvar_z - mu_z.pow(2) - logvar_z.exp())
-
+        kl_z = self.kl_divergence_z(mu_z, logvar_z)
         # KL divergence for c
-        prior_mu_c = self.c_prior_mu.to(device)
-        prior_logvar_c = self.c_prior_logvar.to(device)
-        kl_c = -0.5 * torch.mean(
-            1 + logvar_c - prior_logvar_c - ((mu_c - prior_mu_c).pow(2) + logvar_c.exp()) / prior_logvar_c.exp()
-        )
-
-        # Total VAE loss
-        # Total loss
-        total_loss = recon_loss + kl_weight*kl_z + kl_weight*kl_c
+        kl_c = self.kl_divergence_c(logits_c)
+        
+        total_loss = recon_loss + kl_weight*kl_z + 0.01*kl_c
         return total_loss, recon_loss, kl_z, kl_c
+    
+    # #Loss unction for labelled data
+    # def L(self, x, x_recon, mu_z, logvar_z, mu_c, logvar_c, y, sigma2=1.0, sigma_y2=1.0, kl_weight=1):
+    #     """
+    #     Computes the loss function for GMVAE
+
+    #     Args:
+    #         x: Input images (B, 3, 40, 40)
+    #         mu: Mean of q(z|x) (B, latent_dim)
+    #         logvar: Log variance of q(z|x) (B, latent_dim)
+    #         z: Sampled latent variables (B, latent_dim)
+    #         y: Soft labels (B, num_classes), representing p(y|x)
+    #     Returns:
+    #         total_loss: The total loss for the batch
+    #         loss_dict: Dictionary containing individual loss components
+    #     """
+    #     batch_size = x.size(0)
+    #     device = x.device
+
+    #      # Reconstruction loss (MSE loss)
+    #     recon_loss = F.mse_loss(x_recon, x, reduction='mean') / (2 * sigma2)
+
+    #     # KL divergence for z
+    #     kl_z = -0.5 * torch.mean(1 + logvar_z - mu_z.pow(2) - logvar_z.exp())
+
+    #     # KL divergence for c
+    #     prior_mu_c = self.c_prior_mu.to(device)
+    #     prior_logvar_c = self.c_prior_logvar.to(device)
+    #     kl_c = -0.5 * torch.mean(
+    #         1 + logvar_c - prior_logvar_c - ((mu_c - prior_mu_c).pow(2) + logvar_c.exp()) / prior_logvar_c.exp()
+    #     )
+
+    #     # Total VAE loss
+    #     # Total loss
+    #     total_loss = recon_loss + kl_weight*kl_z + kl_weight*kl_c
+    #     # Compute E_q(c|x)[|| y - c ||^2] = || y - mu_c ||^2 + Tr(Sigma_c)
+    #     diff = y - mu_c
+    #     sq_diff = diff.pow(2).sum(dim=1)  # (B,)
+    #     trace_sigma_c = torch.exp(logvar_c).sum(dim=1)  # (B,)
+    #     expected_sq_diff = sq_diff + trace_sigma_c  # (B,)
+    #     scalled_class_loss = (expected_sq_diff/(2 * sigma_y2)).mean()
+    #     # Add label loss to total loss
+    #     total_loss += scalled_class_loss
+    #     return total_loss, scalled_class_loss
+
+    # # Loss function for unlabeled data
+    # def U(self,x, x_recon, mu_z, logvar_z, mu_c, logvar_c, sigma2=1.0,  kl_weight=1):
+    #     """
+    #     Computes the loss function for GMVAE
+
+    #     Args:
+    #         x: Input images (B, 3, 40, 40)
+    #         mu: Mean of q(z|x) (B, latent_dim)
+    #         logvar: Log variance of q(z|x) (B, latent_dim)
+    #         z: Sampled latent variables (B, latent_dim)
+    #         q_c_probs: Class probabilities q(c|x) (B, num_classes)
+    #         y: Soft labels (B, num_classes), representing p(y|x)
+    #     Returns:
+    #         total_loss: The total loss for the batch
+    #         loss_dict: Dictionary containing individual loss components
+    #     """
+    #     batch_size = x.size(0)
+    #     device = x.device
+
+    #      # Reconstruction loss (MSE loss)
+    #     recon_loss = F.mse_loss(x_recon, x, reduction='mean') / (2 * sigma2)
+
+    #     # KL divergence for z
+    #     kl_z = -0.5 * torch.mean(1 + logvar_z - mu_z.pow(2) - logvar_z.exp())
+
+    #     # KL divergence for c
+    #     prior_mu_c = self.c_prior_mu.to(device)
+    #     prior_logvar_c = self.c_prior_logvar.to(device)
+    #     kl_c = -0.5 * torch.mean(
+    #         1 + logvar_c - prior_logvar_c - ((mu_c - prior_mu_c).pow(2) + logvar_c.exp()) / prior_logvar_c.exp()
+    #     )
+
+    #     # Total VAE loss
+    #     # Total loss
+    #     total_loss = recon_loss + kl_weight*kl_z + kl_weight*kl_c
+    #     return total_loss, recon_loss, kl_z, kl_c
+
         
     def save(self, save_path, epochs=0):
         torch.save(self.state_dict(), f'{save_path}/model.pt')

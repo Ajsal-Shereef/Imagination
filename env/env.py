@@ -97,39 +97,51 @@ def calculate_probabilities(agent_position, observation, agent_direction, purple
     distance_purple = abs(agent_position[0] - purple_key_position[0]) + abs(agent_position[1] - purple_key_position[1])
     distance_green = abs(agent_position[0] - green_ball_position[0]) + abs(agent_position[1] - green_ball_position[1])
     
-    turns_to_purple = calculate_turns_needed(agent_position, purple_key_position, agent_direction)
-    turns_to_green = calculate_turns_needed(agent_position, green_ball_position, agent_direction)
+    # turns_to_purple = calculate_turns_needed(agent_position, purple_key_position, agent_direction)
+    # turns_to_green = calculate_turns_needed(agent_position, green_ball_position, agent_direction)
     
-    distance_purple += turns_to_purple
-    distance_green += turns_to_green
+    # distance_purple += turns_to_purple
+    # distance_green += turns_to_green
     
-    # Check if the agent is directly facing each ball
-    def is_facing(agent_pos, agent_dir_vector, obj_pos):
-        delta_x, delta_y = obj_pos[0] - agent_pos[0], obj_pos[1] - agent_pos[1]
-        return (delta_x, delta_y) == tuple(agent_dir_vector)
+    # # Check if the agent is directly facing each ball
+    # def is_facing(agent_pos, agent_dir_vector, obj_pos):
+    #     delta_x, delta_y = obj_pos[0] - agent_pos[0], obj_pos[1] - agent_pos[1]
+    #     return (delta_x, delta_y) == tuple(agent_dir_vector)
     
 
-    facing_purple = is_facing(agent_position, direction_vector, purple_key_position)
-    facing_green = is_facing(agent_position, direction_vector, green_ball_position)
+    # facing_purple = is_facing(agent_position, direction_vector, purple_key_position)
+    # facing_green = is_facing(agent_position, direction_vector, green_ball_position)
         
     object, _ = generate_caption(observation)
     
-    # Adjust scores based on distance and facing direction
-    if "purple key" in object:
-        score_purple = (-distance_purple) + (0 if facing_purple else 0)
-    else:
-        score_purple = -100
-    if "green ball" in object:
-        score_green = (-distance_green) + (0 if facing_green else 0)
-    else:
-        score_green = -100
+    # # Adjust scores based on distance and facing direction
+    # if "purple key" in object:
+    #     score_purple = (-distance_purple) + (3 if facing_purple else 0)
+    # else:
+    #     score_purple = -100
+    # if "green ball" in object:
+    #     score_green = (-distance_green) + (3 if facing_green else 0)
+    # else:
+    #     score_green = -100
     
-    # Convert scores to probabilities using softmax
-    exp_scores = np.exp([score_purple, score_green])
-    probabilities = exp_scores / np.sum(exp_scores)
-    
+    # # Convert scores to probabilities using softmax
+    # exp_scores = np.exp([score_purple, score_green])
+    # probabilities = exp_scores / np.sum(exp_scores)
+    if 'purple key' and 'green ball' in object:
+        if distance_purple<distance_green:
+            probabilities = np.array([1,0,0])
+        elif distance_purple>distance_green:
+            probabilities = np.array([0,1,0])
+        else:
+            probabilities = np.array([0,0,1])
+    elif 'purple key' in object:
+        probabilities = np.array([1,0,0])
+    elif 'green ball' in object:
+        probabilities = np.array([0,1,0])
+    else:
+        probabilities = np.array([0,0,1])
+        
     return probabilities
-
 
 # def preprocess_observation(obs):
 #     """

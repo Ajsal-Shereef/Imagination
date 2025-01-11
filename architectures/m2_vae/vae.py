@@ -48,12 +48,13 @@ class FeatureEncoder(nn.Module):
         """
         super(FeatureEncoder, self).__init__()
 
-        [input_dim, h_dim] = dims
-        conv1 = CNNLayer(input_dim, 32, 5, 2)
-        conv2 = CNNLayer(32, 64, 5, 2)
-        conv3 = CNNLayer(64, 64, 3)
-        conv_feature = Linear(1600, h_dim)
-        self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
+        [input_dim, h_dim, feature_encoder_channel_dim] = dims
+        conv1 = CNNLayer(input_dim, feature_encoder_channel_dim[0], 3, 2)
+        conv2 = CNNLayer(feature_encoder_channel_dim[0], feature_encoder_channel_dim[1], 3, 2)
+        conv3 = CNNLayer(feature_encoder_channel_dim[1], feature_encoder_channel_dim[2], 3)
+        conv4 = CNNLayer(feature_encoder_channel_dim[2], feature_encoder_channel_dim[3], 3)
+        conv_feature = Linear(1600, h_dim, dropout_prob=0.20)
+        self.feature_encoder = CNN([conv1, conv2, conv3, conv4], conv_feature)
         
 
     def forward(self, x):
@@ -87,8 +88,8 @@ class Decoder(nn.Module):
         [z_dim, y_dim, h_dim, x_dim] = dims
         self.z_dim = z_dim
         self.num_goals = y_dim
-        self.fc_cnn1 = Linear(z_dim, h_dim)
-        self.fc_cnn2 = Linear(h_dim, 1600)
+        self.fc_cnn1 = Linear(z_dim, h_dim, dropout_prob=0.20)
+        self.fc_cnn2 = Linear(h_dim, 1600, dropout_prob=0.20)
 
         # FiLM layers for conditioning
         self.film1 = FiLMLayer(1600, y_dim)

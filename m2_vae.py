@@ -70,8 +70,8 @@ def main(args: DictConfig) -> None:
     unlabelled_data_loader = DataLoader(unlabelled_data, batch_size=900, shuffle=True)
     labelled_data_loader = DataLoader(labelled_data, batch_size=900, shuffle=True)
     #Creating the model and the optimizer
-    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.h_dim, \
-                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim]).to(device)
+    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim]).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
     
     scheduler_model = CosineAnnealingLR(optimizer, T_max=args.M2_Network.epochs)
@@ -87,16 +87,14 @@ def main(args: DictConfig) -> None:
         for (unlabelled, unused_labels), (labelled, labels) in zip(unlabelled_data_loader, cycle(labelled_data_loader)):
             x, y, u, uy = Variable(labelled).to(device).float(), Variable(labels).to(device).float(), Variable(unlabelled).to(device).float(), Variable(unused_labels).to(device).float()
 
-            x_reconstructed, x_z, x_z_mu, x_z_log_var, x_mu_c, x_logvar_c = model(x, y)
-            kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, 0.01, 1, 150, True)
+            x_reconstructed, x_z, x_z_mu, x_z_log_var, x_c_logits, x_c = model(x)
+            kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, args.M2_Network.kl_weight_start, args.M2_Network.kl_weight_end, 150, True)
             # kl_divergence_weight = 1
-            total_loss_L, cls_loss = model.L(x, x_reconstructed, x_z_mu, x_z_log_var, x_mu_c, x_logvar_c, y,\
-                                             kl_weight=kl_divergence_weight)
+            total_loss_L, cls_loss = model.L(x, x_reconstructed, x_z_mu, x_z_log_var, y, x_c_logits, kl_weight=kl_divergence_weight)
             # L = model.L(x, y, labelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
             
-            u_reconstructed, u_z, u_z_mu, u_z_log_var, u_mu_c, u_logvar_c = model(u)
-            total_loss_U, recon_loss, kl_z, kl_c = model.U(u, u_reconstructed, u_z_mu, u_z_log_var, u_mu_c, u_logvar_c, \
-                                                           kl_weight=kl_divergence_weight)
+            u_reconstructed, u_z, u_z_mu, u_z_log_var, u_c_logits, u_c = model(u)
+            total_loss_U, recon_loss, kl_z, kl_c = model.U(u, u_reconstructed, u_z_mu, u_z_log_var, u_c_logits, kl_weight=kl_divergence_weight)
             # reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
             
             #Classification loss for labelled data
@@ -145,8 +143,8 @@ def main(args: DictConfig) -> None:
             # # Compute accuracy only for valid rows
             # acc = torch.mean((valid_y_pred == valid_y).float())
             # accuracy += acc.item()
-            accuracy_labeled += torch.mean((torch.max(F.softmax(x_mu_c, dim=-1), 1)[1].data == torch.max(y, 1)[1].data).float())
-            accuracy_unlabeled += torch.mean((torch.max(F.softmax(u_mu_c, dim=-1), 1)[1].data == torch.max(uy, 1)[1].data).float())
+            accuracy_labeled += torch.mean((torch.max(F.softmax(x_c_logits, dim=-1), 1)[1].data == torch.max(y, 1)[1].data).float())
+            accuracy_unlabeled += torch.mean((torch.max(F.softmax(u_c_logits, dim=-1), 1)[1].data == torch.max(uy, 1)[1].data).float())
             iter += 1
         if epoch%args.M2_Network.save_freequency == 0:
             model.save(model_dir, epoch)

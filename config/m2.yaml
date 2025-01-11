@@ -3,15 +3,17 @@ M2_General:
   agent_view_size : 3
   load_model_path : 'models/'
   datapath : "data"
-  num_goals : 2
+  y_dim : 3
 M2_Network:
   input_dim : 3
   classifier_hidden_dim : [256,512]
+  feature_encoder_channel_dim : [128, 128, 128, 64]
   h_dim : 256 
-  latent_dim : 24
+  latent_dim : 16
   decoder_hidden_dim : [512]
-  epochs : 50000
+  epochs : 5000
   batch_size : 64
   lr_model : 5e-4
-  kl_weight : 0.1
+  kl_weight_start : 0.01
+  kl_weight_end : 0.3
   save_freequency : 1000

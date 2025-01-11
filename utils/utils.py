@@ -5,6 +5,7 @@ import string
 import random
 import numpy as np
 import matplotlib.pyplot as plt
+import torch.nn.functional as F
 
 from tqdm import tqdm
 from datetime import datetime
@@ -81,6 +82,14 @@ def create_dump_directory(path):
     dump_dir = os.path.join(path, datetime.now().strftime('%Y-%m-%d_%H-%M-%S') + '_{}'.format(str))
     os.makedirs(dump_dir, exist_ok=True)
     return dump_dir
+
+def sample_gumbel_softmax(c_logit, training=True, tau=0.1):
+    if training:
+        gumbel_noise = -torch.log(-torch.log(torch.rand_like(c_logit) + 1e-10) + 1e-10)
+        y = F.softmax((c_logit + gumbel_noise) / tau, dim=-1)
+        return y
+    else:
+        return F.softmax((c_logit)/tau, dim=-1)
 
 def custom_soft_action_encoding(action, num_action=2, dim=24):
     if dim % num_action != 0:

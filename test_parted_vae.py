@@ -6,9 +6,9 @@ import matplotlib.pyplot as plt
 
 from PIL import Image
 from utils.utils import *
-from utils.visualize import Visualizer
 from sac_agent.agent import SAC
 from partedvae.models import VAE
+from utils.visualize import Visualizer
 from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
 from imagination.imagination_net import ImaginationNet
@@ -17,7 +17,7 @@ from utils.collect_vae_training_data import collect_data
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_dir = "models/m2_vae/2025-01-09_22-49-55_IXHBZ4/model.pt"
+model_dir = "models/m2_vae/2025-01-11_23-50-42_SFIL1C/model.pt"
 
 def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """
@@ -109,12 +109,12 @@ def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[],
                 
                 
                 true_label = true_label.float().to(device)
-                true_labels.append(true_label.detach().cpu().numpy())
+                true_labels.append(torch.argmax(true_label, dim=-1).detach().cpu().numpy())
                 # Forward pass
-                x_reconstructed, x_z, x_z_mu, x_z_log_var, x_mu_c, x_logvar_c = model(data)
+                x_reconstructed, x_z, x_z_mu, x_z_log_var, u_c_logits, u_c = model(data)
                 latent = x_z
                 all_z.append(latent.detach().cpu().numpy())
-                all_labels.append(x_mu_c.detach().cpu().numpy())
+                all_labels.append(torch.argmax(u_c_logits, dim=-1).detach().cpu().numpy())
                 # Optionally, collect labels or other metadata if available
         all_z = np.concatenate(all_z, axis=0)  # [num_samples, latent_dim]
         all_labels = np.concatenate(all_labels, axis=0)
@@ -155,21 +155,38 @@ def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[],
     else:
         raise ValueError("Method must be 'pca' or 'tsne'.")
     
-    plt.scatter(reduced_z[:,0], reduced_z[:,1], c=all_labels[:,1], cmap='coolwarm', edgecolor='k', alpha=0.7)
-    plt.colorbar(label='Predicted probability of Class 1')
+    unique_labels = np.unique(all_labels)
+    
+    # Create scatter plot
+    plt.figure(figsize=(8, 6))
+    for label in unique_labels:
+        # Filter points by label
+        mask = all_labels == label
+        plt.scatter(reduced_z[:,0][mask], reduced_z[:,1][mask], label=f'Class {label}', alpha=0.7)
+    
     plt.xlabel("X-axis")
     plt.ylabel("Y-axis")
     plt.title("Class latent")
+    plt.legend()
     plt.savefig(fig_save_name)
     plt.close()
     
-    plt.scatter(reduced_z[:,0], reduced_z[:,1], c=true_labels[:,1], cmap='coolwarm', edgecolor='k', alpha=0.7)
-    plt.colorbar(label='True probability of Class 1')
+    unique_labels = np.unique(true_labels)
+    
+    # Create scatter plot
+    plt.figure(figsize=(8, 6))
+    for label in unique_labels:
+        # Filter points by label
+        mask = all_labels == label
+        plt.scatter(reduced_z[:,0][mask], reduced_z[:,1][mask], label=f'Class {label}', alpha=0.7)
+    
     plt.xlabel("X-axis")
     plt.ylabel("Y-axis")
     plt.title("Class latent")
+    plt.legend()
     plt.savefig(true_fig_save_name)
     plt.close()
+    
     
     # if method == 'pca':
     #     reducer = PCA(n_components=2)
@@ -250,8 +267,8 @@ def main(args: DictConfig) -> None:
     #Loading the pretrained weight of sac agent.
     # agent.load_params(args.Imagination_General.agent_checkpoint)
     
-    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.h_dim, \
-                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim]).to(device)
+    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim]).to(device)
     model.load(model_dir)
     model.to(device)
     model.eval()
