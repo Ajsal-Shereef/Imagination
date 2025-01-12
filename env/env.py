@@ -103,43 +103,49 @@ def calculate_probabilities(agent_position, observation, agent_direction, purple
     # distance_purple += turns_to_purple
     # distance_green += turns_to_green
     
-    # # Check if the agent is directly facing each ball
-    # def is_facing(agent_pos, agent_dir_vector, obj_pos):
-    #     delta_x, delta_y = obj_pos[0] - agent_pos[0], obj_pos[1] - agent_pos[1]
-    #     return (delta_x, delta_y) == tuple(agent_dir_vector)
+    if np.array_equal(agent_position, purple_key_position):
+        print("Overlap with purple key")
+        
+    if np.array_equal(agent_position, green_ball_position):
+        print("Overlap with green key")
+    
+    # Check if the agent is directly facing each ball
+    def is_facing(agent_pos, agent_dir_vector, obj_pos):
+        delta_x, delta_y = obj_pos[0] - agent_pos[0], obj_pos[1] - agent_pos[1]
+        return (delta_x, delta_y) == tuple(agent_dir_vector)
     
 
-    # facing_purple = is_facing(agent_position, direction_vector, purple_key_position)
-    # facing_green = is_facing(agent_position, direction_vector, green_ball_position)
+    facing_purple = is_facing(agent_position, direction_vector, purple_key_position)
+    facing_green = is_facing(agent_position, direction_vector, green_ball_position)
         
     object, _ = generate_caption(observation)
     
-    # # Adjust scores based on distance and facing direction
-    # if "purple key" in object:
-    #     score_purple = (-distance_purple) + (3 if facing_purple else 0)
-    # else:
-    #     score_purple = -100
-    # if "green ball" in object:
-    #     score_green = (-distance_green) + (3 if facing_green else 0)
-    # else:
-    #     score_green = -100
-    
-    # # Convert scores to probabilities using softmax
-    # exp_scores = np.exp([score_purple, score_green])
-    # probabilities = exp_scores / np.sum(exp_scores)
-    if 'purple key' and 'green ball' in object:
-        if distance_purple<distance_green:
-            probabilities = np.array([1,0,0])
-        elif distance_purple>distance_green:
-            probabilities = np.array([0,1,0])
-        else:
-            probabilities = np.array([0,0,1])
-    elif 'purple key' in object:
-        probabilities = np.array([1,0,0])
-    elif 'green ball' in object:
-        probabilities = np.array([0,1,0])
+    # Adjust scores based on distance and facing direction
+    if "purple key" in object:
+        score_purple = (-distance_purple) + (3 if facing_purple else 0)
     else:
-        probabilities = np.array([0,0,1])
+        score_purple = -10
+    if "green ball" in object:
+        score_green = (-distance_green) + (3 if facing_green else 0)
+    else:
+        score_green = -10
+    
+    # Convert scores to probabilities using softmax
+    exp_scores = np.exp([score_purple, score_green])
+    probabilities = exp_scores / np.sum(exp_scores)
+    # if 'purple key' and 'green ball' in object:
+    #     if distance_purple<distance_green:
+    #         probabilities = np.array([1,0,0])
+    #     elif distance_purple>distance_green:
+    #         probabilities = np.array([0,1,0])
+    #     else:
+    #         probabilities = np.array([0,0,1])
+    # elif 'purple key' in object:
+    #     probabilities = np.array([1,0,0])
+    # elif 'green ball' in object:
+    #     probabilities = np.array([0,1,0])
+    # else:
+    #     probabilities = np.array([0,0,1])
         
     return probabilities
 
@@ -565,10 +571,10 @@ class SimplePickup(MiniGridEnv):
         # self.purple_key_loc = (2,4)
         
         # Place one green ball at a random position
-        self.green_ball_loc = self.place_obj(Ball('green'), max_tries=100)
+        self.green_ball_loc = self.place_obj(Ball('green', can_overlap=False), max_tries=100)
 
         # Place one purple key at a random position
-        self.purple_key_loc = self.place_obj(Key('purple'), max_tries=100)
+        self.purple_key_loc = self.place_obj(Key('purple', can_overlap=False), max_tries=100)
 
         # Place the agent
         if self.agent_start_pos is not None:
