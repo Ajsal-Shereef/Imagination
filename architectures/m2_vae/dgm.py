@@ -138,9 +138,9 @@ class DeepGenerativeModel(nn.Module):
         kl_z = self.kl_divergence_z(mu_z, logvar_z)
         # KL divergence for c
         kl_c = self.kl_divergence_c(logits_c)
-        label_loss = self.label_loss_function(F.softmax(logits_c), y)
+        label_loss = self.label_loss_function(logits_c, y)
         
-        total_loss = recon_loss + kl_weight*kl_z + 0.01*kl_c + label_loss
+        total_loss = recon_loss + kl_weight*kl_z + 0.01*kl_c + 10*label_loss
         return total_loss, label_loss
     
     def U(self, x, x_recon, mu_z, logvar_z, logits_c, kl_weight):
