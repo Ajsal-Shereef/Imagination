@@ -3,7 +3,7 @@ M2_General:
   agent_view_size : 3
   load_model_path : 'models/'
   datapath : "data"
-  y_dim : 3
+  y_dim : 4
 M2_Network:
   input_dim : 3
   classifier_hidden_dim : [256,512]

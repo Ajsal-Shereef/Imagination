@@ -127,19 +127,19 @@ def calculate_probabilities(agent_position, observation, agent_direction, purple
     # # Convert scores to probabilities using softmax
     # exp_scores = np.exp([score_purple, score_green])
     # probabilities = exp_scores / np.sum(exp_scores)
-    if 'purple key' and 'green ball' in object:
+    if 'purple key' in object and 'green ball' in object:
         if distance_purple<distance_green:
-            probabilities = np.array([1,0,0])
+            probabilities = np.array([1,0,0,0])
         elif distance_purple>distance_green:
-            probabilities = np.array([0,1,0])
+            probabilities = np.array([0,1,0,0])
         else:
-            probabilities = np.array([0,0,1])
+            probabilities = np.array([0,0,1,0])
     elif 'purple key' in object:
-        probabilities = np.array([1,0,0])
+        probabilities = np.array([1,0,0,0])
     elif 'green ball' in object:
-        probabilities = np.array([0,1,0])
+        probabilities = np.array([0,1,0,0])
     else:
-        probabilities = np.array([0,0,1])
+        probabilities = np.array([0,0,0,1])
         
     return probabilities
 
