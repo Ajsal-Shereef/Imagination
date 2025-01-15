@@ -11,7 +11,7 @@ from architectures.mlp import MLP, Linear
 from architectures.cnn import CNNLayer, CNN
 from env.env import MiniGridTransitionDescriber
 from sentence_transformers import SentenceTransformer
-from utils.utils import anneal_coefficient, compute_entropy
+from helper_functions.utils import anneal_coefficient, compute_entropy
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 warnings.filterwarnings('ignore')

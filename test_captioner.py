@@ -1,5 +1,5 @@
 import torch
-from utils.utils import *
+from helper_functions.utils import *
 from torch.utils.data import DataLoader
 from train_captioner import FeatureToTextModel, FeatureToTextDataset, collect_data
 from env.env import SimplePickup, MiniGridTransitionDescriber

@@ -4,7 +4,7 @@ import torch
 from torch import nn
 import torch.nn.functional as F
 
-from utils.utils import log_sum_exp, enumerate_discrete
+from helper_functions.utils import log_sum_exp, enumerate_discrete
 from architectures.m2_vae.distributions import log_standard_categorical
 
 class ImportanceWeightedSampler(object):

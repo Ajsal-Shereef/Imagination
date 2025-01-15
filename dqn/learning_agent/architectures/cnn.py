@@ -5,7 +5,7 @@ import math
 
 from learning_agent.common_utils import identity
 from learning_agent.architectures.mlp import MLP, GaussianDist, CategoricalDistParams, TanhGaussianDistParams
-from utils.utils import get_device, custom_action_encoding
+from helper_functions.utils import get_device, custom_action_encoding
 import torch.nn.functional as F
 from torch.distributions.normal import Normal
 import torchvision.models as models

@@ -1,7 +1,6 @@
 import math
-
-import numpy as np
 import torch
+import numpy as np
 from PIL import Image
 from scipy import stats
 from torchvision.utils import make_grid, save_image
@@ -22,7 +21,7 @@ class Visualizer:
         self.model = model
         self.root = root
 
-    def reconstructions(self, data, size=(8, 8), label=None):
+    def reconstructions(self, data, size=(10, 10), label=None):
         # Plot reconstructions in test mode, i.e. without sampling from latent
         # self.model.eval()
         data = data.to(self.device)
@@ -34,7 +33,7 @@ class Visualizer:
             # syn_data = torch.rand(data.shape).to('cuda')
             recon_data_flipped = self.model.generate(data.float(), label_flipped.float())
 
-        # Upper half of plot will contain data, bottom half will contain reconstructions
+        # Odd columns contain the data and the even columns next to it contains the reconstructions
         num_images = size[0] * size[1] // 2
         originals = data[:num_images].cpu()
         reconstructions = x_reconstructed.view(-1, 3, 40, 40)[:num_images].cpu()

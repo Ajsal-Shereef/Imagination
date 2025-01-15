@@ -1,13 +1,14 @@
+import sys
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.nn import init
 from architectures.mlp import MLP, Linear
-from utils.utils import anneal_coefficient, sample_gumbel_softmax
 from architectures.m2_vae.stochastic import GaussianSample
 from architectures.m2_vae.vae import VariationalAutoencoder
-from architectures.m2_vae.distributions import log_standard_categorical
+from helper_functions.utils import anneal_coefficient, sample_gumbel_softmax
+# from architectures.m2_vae.distributions import log_standard_categorical
 from architectures.m2_vae.vae import FeatureEncoder, Decoder, LadderEncoder, LadderDecoder
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -34,7 +35,7 @@ class Classifier(nn.Module):
 
 
 class DeepGenerativeModel(nn.Module):
-    def __init__(self, dims, label_weight):
+    def __init__(self, dims, label_weight, recon_weight):
         """
         M2 code replication from the paper
         'Semi-Supervised Learning with Deep Generative Models'
@@ -49,12 +50,15 @@ class DeepGenerativeModel(nn.Module):
         """
         [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden, feature_encoder_channel_dim] = dims
         self.label_weight = label_weight
+        self.recon_weight = recon_weight
         super(DeepGenerativeModel, self).__init__()
         self.encoder = FeatureEncoder([self.x_dim, self.h_dim, feature_encoder_channel_dim])
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
         self.decoder = Decoder([self.z_dim, self.y_dim, self.h_dim, self.x_dim])
         # self.classifier = GaussianSample(self.h_dim, self.z_dim)
         self.classifier = Linear(self.h_dim, self.y_dim)
+        
+        self.descriminator = Linear(self.z_dim + self.y_dim, 1, dropout_prob=0.2)
         
         self.register_buffer('c_prior_mu', torch.full((self.z_dim,), 1.0 / self.z_dim))
         self.register_buffer('c_prior_logvar', torch.zeros(self.z_dim))  # Log variance of 0
@@ -117,6 +121,28 @@ class DeepGenerativeModel(nn.Module):
     #     x = self.decoder(torch.cat([z, y], dim=1))
     #     return x
     
+    def mi_loss(self, z_samples, c_samples):
+        # Joint samples
+        z_joint = z_samples  # [batch_size, latent_dim_z]
+        c_joint = c_samples  # [batch_size, latent_dim_c]
+        # Marginal samples (shuffled c)
+        c_shuffled = c_samples[torch.randperm(z_joint.shape[0])]  # Shuffle c in the batch
+        c_marginal = c_shuffled
+        # Compute scores for joint samples
+        joint_latent = torch.cat([z_joint, c_joint], dim=-1)
+        s_joint = self.descriminator(joint_latent)  # [batch_size, 1]
+        # Compute scores for marginal samples
+        marginal_latent = torch.cat([z_joint, c_marginal], dim=-1)
+        s_marginal = self.descriminator(marginal_latent)  # [batch_size, 1]
+
+        # Donsker-Varadhan representation of MI
+        joint_loss = s_joint.mean()  # Expectation over joint samples
+        marginal_loss = torch.logsumexp(s_marginal, dim=0) - torch.log(torch.tensor(c_joint.size(0), dtype=torch.float)+ 1e-8)
+
+        # Mutual Information Loss (negative since we maximize MI)
+        mi_loss = -(joint_loss - marginal_loss)
+        return mi_loss
+    
     def kl_divergence_z(self, mu, logvar):
         kl = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp(), dim=-1)
         return kl.mean()
@@ -145,8 +171,12 @@ class DeepGenerativeModel(nn.Module):
         x_reconstructed, z_latent, z_mu, z_log_var, c_logits, c = self.forward(x_recon)
         x_reconstructed_label_loss = self.label_loss_function(c_logits, y)
         
-        total_loss = recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + x_reconstructed_label_loss
-        return total_loss, label_loss
+        # Mutual information loss to disentagle z and c
+        mi_loss = self.mi_loss(mu_z, y)
+        # mi_loss = 0
+        
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + x_reconstructed_label_loss + mi_loss
+        return total_loss, label_loss, mi_loss
     
     def U(self, x, x_recon, mu_z, logvar_z, logits_c, kl_weight):
         #Reconstruction loss
@@ -157,7 +187,11 @@ class DeepGenerativeModel(nn.Module):
         # KL divergence for c
         kl_c = self.kl_divergence_c(logits_c)
         
-        total_loss = recon_loss + kl_weight*kl_z + 0.01*kl_c
+        #Self supervised label loss
+        _, _, _, _, recon_logit, _ = self.forward(x_recon)
+        reconstructed_label_loss = self.label_loss_function(recon_logit, torch.argmax(logits_c, dim=-1))
+        
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + reconstructed_label_loss
         return total_loss, recon_loss, kl_z, kl_c
     
     # #Loss unction for labelled data

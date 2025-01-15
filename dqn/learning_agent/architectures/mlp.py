@@ -6,7 +6,7 @@ import numpy as np
 
 from learning_agent.common_utils import identity
 from learning_agent.math_utils import TanhNormal
-from utils.utils import get_device
+from helper_functions.utils import get_device
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

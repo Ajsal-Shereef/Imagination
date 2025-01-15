@@ -5,19 +5,19 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
 from PIL import Image
-from utils.utils import *
+from helper_functions.utils import *
 from sac_agent.agent import SAC
 from partedvae.models import VAE
-from utils.visualize import Visualizer
+from helper_functions.visualize import Visualizer
 from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
 from imagination.imagination_net import ImaginationNet
 from architectures.m2_vae.dgm import DeepGenerativeModel
-from utils.collect_vae_training_data import collect_data
+from helper_functions.collect_vae_training_data import collect_data
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_dir = "models/m2_vae/2025-01-12_18-38-25_798QH4/model.pt"
+model_dir = "models/m2_vae/2025-01-14_13-02-43_TSGVV1/model.pt"
 
 def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """

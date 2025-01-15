@@ -4,7 +4,7 @@ import hydra
 import torch
 import itertools
 from torch import optim
-from utils.utils import *
+from helper_functions.utils import *
 from dqn.dqn import DQNAgent
 from sac_agent.agent import SAC
 from partedvae.models import VAE

@@ -91,11 +91,11 @@ def calculate_turns_needed(agent_pos, obj_pos, agent_dir):
 
 def calculate_probabilities(agent_position, observation, agent_direction, purple_key_position, green_ball_position):
     # Get direction vector using DIR_TO_VEC
-    direction_vector = DIR_TO_VEC[agent_direction]
+    # direction_vector = DIR_TO_VEC[agent_direction]
     
     # Calculate Manhattan distances to each ball
-    distance_purple = abs(agent_position[0] - purple_key_position[0]) + abs(agent_position[1] - purple_key_position[1])
-    distance_green = abs(agent_position[0] - green_ball_position[0]) + abs(agent_position[1] - green_ball_position[1])
+    # distance_purple = abs(agent_position[0] - purple_key_position[0]) + abs(agent_position[1] - purple_key_position[1])
+    # distance_green = abs(agent_position[0] - green_ball_position[0]) + abs(agent_position[1] - green_ball_position[1])
     
     # turns_to_purple = calculate_turns_needed(agent_position, purple_key_position, agent_direction)
     # turns_to_green = calculate_turns_needed(agent_position, green_ball_position, agent_direction)
@@ -127,19 +127,20 @@ def calculate_probabilities(agent_position, observation, agent_direction, purple
     # # Convert scores to probabilities using softmax
     # exp_scores = np.exp([score_purple, score_green])
     # probabilities = exp_scores / np.sum(exp_scores)
+    
+    if np.array_equal(agent_position, purple_key_position):
+        print("Overlap with purple key")
+    if np.array_equal(agent_position, green_ball_position):
+        print("Overlap with Green ball")
+    
     if 'purple key' in object and 'green ball' in object:
-        if distance_purple<distance_green:
-            probabilities = np.array([1,0,0,0])
-        elif distance_purple>distance_green:
-            probabilities = np.array([0,1,0,0])
-        else:
-            probabilities = np.array([0,0,1,0])
+        probabilities = np.array([0,0,1])
     elif 'purple key' in object:
-        probabilities = np.array([1,0,0,0])
+        probabilities = np.array([1,0,0])
     elif 'green ball' in object:
-        probabilities = np.array([0,1,0,0])
+        probabilities = np.array([0,1,0])
     else:
-        probabilities = np.array([0,0,0,1])
+        probabilities = np.array([0,0,1])
         
     return probabilities
 

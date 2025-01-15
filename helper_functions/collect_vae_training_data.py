@@ -15,9 +15,16 @@ from sentence_transformers import SentenceTransformer
 import sys
 sys.path.append('.')
 
+import cv2
+import hydra
+import torch
+import numpy as np
+from architectures.m2_vae.dgm import DeepGenerativeModel
+from omegaconf import DictConfig, OmegaConf
+from torchvision.utils import save_image
 from env.env import calculate_probabilities, generate_caption, MiniGridTransitionDescriber
 
-encoder = "all-MiniLM-L12-v2"
+model_dir = "models/m2_vae/2025-01-14_13-02-43_TSGVV1/model.pt"
 
 # =============================
 # 1. Define the Q-Network Class
@@ -167,7 +174,7 @@ def select_action_q_network(q_network, state, device):
 # 4. Data Collection
 # =============================
 
-def collect_data(env, use_random, episodes, max_steps, device, q_network_path=None):
+def collect_data(env, use_random, episodes, max_steps, device, vae, q_network_path=None):
     """
     Collect transition data from the specified environment using the chosen policy.
     
@@ -264,7 +271,14 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
             next_state = np.transpose(next_state['image'], (2, 0, 1))
             # c_state = env.get_unprocesed_obs()
             
-            # c_frame = env.get_frame()
+            vae_outputs = vae(torch.tensor(next_state/255).to(device).float())
+            generated = vae.generate(torch.tensor(next_state/255).to(device).float(), torch.tensor([1,0,0]).to(device).float())
+            comparison = torch.empty((2 ,) + torch.tensor(next_state/255).size())
+            comparison[0::2] = torch.tensor(next_state/255).to(device).float()
+            comparison[1::2] = generated
+            save_image(comparison.data, 'test.png', nrow=1, pad_value=0.3)
+            
+            c_frame = env.get_frame()
             # c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
             # cv2.imwrite("frame.png", c_frame)
             
@@ -306,8 +320,8 @@ def collect_data(env, use_random, episodes, max_steps, device, q_network_path=No
 # =============================
 # 5. Main Function
 # =============================
-
-def main():
+@hydra.main(version_base=None, config_path="../config", config_name="master_config")
+def main(arg: DictConfig) -> None:
     args = parse_arguments()
     
     env_name = args.env
@@ -330,6 +344,13 @@ def main():
         from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
         env = RGBImgPartialObsWrapper(env)
         # transition_captioner = 
+        
+    model = DeepGenerativeModel([arg.M2_Network.input_dim, arg.M2_General.y_dim, arg.M2_Network.h_dim, \
+                                 arg.M2_Network.latent_dim, arg.M2_Network.classifier_hidden_dim, arg.M2_Network.feature_encoder_channel_dim], \
+                                 arg.M2_Network.label_loss_weight).to(device)
+    model.load(model_dir)
+    model.to(device)
+    model.eval()
     
     # Collect data
     data, captions, class_prob = collect_data(
@@ -338,7 +359,8 @@ def main():
         q_network_path=q_network_path,
         episodes=episodes,
         max_steps=max_steps,
-        device=device
+        device=device,
+        vae=model
     )
     
     # Save data

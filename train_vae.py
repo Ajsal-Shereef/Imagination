@@ -7,12 +7,12 @@ import itertools
 import numpy as np
 import torch.nn as nn
 from tqdm import tqdm
-from utils.utils import *
+from helper_functions.utils import *
 from vae.vae import GMVAE
 import torch.optim as optim
 from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
-from utils.get_llm_output import GetLLMGoals
+from helper_functions.get_llm_output import GetLLMGoals
 from sklearn.model_selection import train_test_split
 from sentence_transformers import SentenceTransformer
 

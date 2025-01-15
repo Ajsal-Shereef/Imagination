@@ -2,7 +2,7 @@ import torch
 import wandb
 import torch.nn as nn
 import torch.nn.functional as F
-from utils.utils import *
+from helper_functions.utils import *
 import torch.optim as optim
 # from architectures.mlp import MLP
 from torch.utils.data import DataLoader

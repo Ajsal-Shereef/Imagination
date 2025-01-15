@@ -3,7 +3,7 @@ import torch
 import warnings
 from vae.vae import GMVAE
 from env.env import SimplePickup
-from utils.get_llm_output import GetLLMGoals
+from helper_functions.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
 
 vae_path = "models/all-MiniLM-L12-v2/Feature_based/vae_normal.pth"

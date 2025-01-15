@@ -7,7 +7,7 @@ from torch.autograd import Variable
 from architectures.mlp import Linear
 from architectures.film import FiLMLayer
 from architectures.cnn import CNNLayer, CNN
-from utils.utils import custom_soft_action_encoding
+# from utils.utils import custom_soft_action_encoding
 from architectures.m2_vae.distributions import log_gaussian, log_standard_gaussian
 from architectures.m2_vae.stochastic import GaussianSample, GaussianMerge, GumbelSoftmax
 

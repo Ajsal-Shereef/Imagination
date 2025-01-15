@@ -4,7 +4,7 @@ import torch
 import numpy as np
 from tqdm import tqdm
 import torch.nn as nn
-from utils.utils import *
+from helper_functions.utils import *
 import torch.optim as optim
 import torch.distributed as dist
 from architectures.mlp import MLP

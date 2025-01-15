@@ -2,7 +2,7 @@ import hydra
 import wandb
 import warnings
 from dqn.dqn import DQNAgent
-from utils.utils import test
+from helper_functions.utils import test
 from omegaconf import DictConfig, OmegaConf
 
 warnings.filterwarnings("ignore")

@@ -3,7 +3,7 @@ from collections import deque
 import numpy as np
 import torch
 
-from utils.trajectory_utils import get_n_step_info, read_expert_demo, demo_discrete_actions_to_one_hot, \
+from helper_functions.trajectory_utils import get_n_step_info, read_expert_demo, demo_discrete_actions_to_one_hot, \
     get_flatten_trajectories, stack_frames_in_traj
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

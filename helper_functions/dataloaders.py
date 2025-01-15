@@ -5,7 +5,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 
-from utils.fast_tensor_dataloader import FastTensorDataLoader
+from helper_functions.fast_tensor_dataloader import FastTensorDataLoader
 
 
 def get_mnist_dataloaders(batch_size=128, path_to_data='../data', warm_up=True, device=None):

@@ -3,10 +3,10 @@ import hydra
 import torch
 import numpy as np
 from vae.vae import GMVAE
-from utils.utils import *
+from helper_functions.utils import *
 from omegaconf import DictConfig
 from torch.utils.data import DataLoader
-from utils.get_llm_output import GetLLMGoals
+from helper_functions.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
 
 @hydra.main(version_base=None, config_path="config", config_name="vae")

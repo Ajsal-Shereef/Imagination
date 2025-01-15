@@ -1,6 +1,6 @@
 import torch
 import torch.nn.functional as F
-from utils.get_llm_output import GetLLMGoals
+from helper_functions.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer, CrossEncoder
 
 vae_path = "models/all-MiniLM-L6-v2/Feature_based/vae_normal.pth"

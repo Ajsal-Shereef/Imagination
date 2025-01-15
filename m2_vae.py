@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import torch.nn.functional as F
 
 from tqdm import tqdm
-from utils.utils import *
+from helper_functions.utils import *
 from itertools import cycle
 from torch.autograd import Variable
 from matplotlib.patches import Patch
@@ -72,7 +72,8 @@ def main(args: DictConfig) -> None:
     #Creating the model and the optimizer
     model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
                                  args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
-                                args.M2_Network.label_loss_weight).to(device)
+                                 args.M2_Network.label_loss_weight,
+                                 args.M2_Network.recon_loss_weight).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
     
     scheduler_model = CosineAnnealingLR(optimizer, T_max=args.M2_Network.epochs)
@@ -81,7 +82,7 @@ def main(args: DictConfig) -> None:
     wandb.config.update(OmegaConf.to_container(args, resolve=True))
     epoch_bar = tqdm(range(args.M2_Network.epochs), desc="Training Progress", unit="epoch")
     for epoch in epoch_bar:
-        total_loss, accuracy_labeled, accuracy_unlabeled = (0, 0, 0)
+        total_loss, accuracy_labeled, accuracy_unlabeled, mi_losses = (0, 0, 0, 0)
         classification_losses, reconstruction_errors, z_kl_losses, u_kl_losses  = 0, 0, 0, 0
         L_losses, U_losses = 0, 0
         iter = 0
@@ -89,9 +90,9 @@ def main(args: DictConfig) -> None:
             x, y, u, uy = Variable(labelled).to(device).float(), Variable(labels).to(device).float(), Variable(unlabelled).to(device).float(), Variable(unused_labels).to(device).float()
 
             x_reconstructed, x_z, x_z_mu, x_z_log_var, x_c_logits, x_c = model(x)
-            kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, args.M2_Network.kl_weight_start, args.M2_Network.kl_weight_end, 150, True)
-            # kl_divergence_weight = 1
-            total_loss_L, cls_loss = model.L(x, x_reconstructed, x_z_mu, x_z_log_var, y, x_c_logits, kl_weight=kl_divergence_weight)
+            # kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, args.M2_Network.kl_weight_start, args.M2_Network.kl_weight_end, 150, True)
+            kl_divergence_weight = 0.01
+            total_loss_L, cls_loss, mi_loss = model.L(x, x_reconstructed, x_z_mu, x_z_log_var, y, x_c_logits, kl_weight=kl_divergence_weight)
             # L = model.L(x, y, labelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
             
             u_reconstructed, u_z, u_z_mu, u_z_log_var, u_c_logits, u_c = model(u)
@@ -133,6 +134,7 @@ def main(args: DictConfig) -> None:
             u_kl_losses+= kl_c.item()
             L_losses += total_loss_L.item()
             U_losses += total_loss_U.item()
+            mi_losses = mi_loss.item()
             
             # # Mask to identify rows where the target is not [0.5, 0.5]
             # mask = ~(torch.all(y == 0.5, dim=1))
@@ -156,6 +158,7 @@ def main(args: DictConfig) -> None:
                    "U_kl_loss" : u_kl_losses/len(unlabelled_data_loader),
                    "L loss" : L_losses/len(unlabelled_data_loader),
                    "U loss" : U_losses/len(unlabelled_data_loader),
+                   "Mutual info loss" : mi_losses/len(unlabelled_data_loader),
                    "Accuracy" : accuracy_labeled/len(unlabelled_data_loader),
                    "Unlabelled Accuracy" : accuracy_unlabeled/len(unlabelled_data_loader),
                    "Current Learning rate" : optimizer.param_groups[0]['lr'],

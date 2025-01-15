@@ -10,10 +10,10 @@ from env.env import reverse_preprocess_observation
 from vae.vae import GMVAE
 from sac_agent.agent import SAC
 from dqn.dqn import DQNAgent
-from utils.utils import write_video
+from helper_functions.utils import write_video
 # from gymnasium.wrappers import RecordVideo
 from omegaconf import DictConfig
-from utils.get_llm_output import GetLLMGoals
+from helper_functions.get_llm_output import GetLLMGoals
 from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 from architectures.m2_vae.dgm import DeepGenerativeModel

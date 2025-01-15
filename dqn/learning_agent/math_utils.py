@@ -4,7 +4,7 @@ import time
 import torch
 from torch.distributions import Independent, Normal
 
-from utils.utils import get_device
+from helper_functions.utils import get_device
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 

@@ -3,7 +3,7 @@ import torch
 import random
 import wandb
 from tqdm import tqdm
-from utils.utils import *
+from helper_functions.utils import *
 # from vae.vae import GMVAE
 import torch.optim as optim
 from dqn.dqn import DQNAgent
@@ -11,7 +11,7 @@ from sac_agent.agent import SAC
 from partedvae.models import VAE
 from torch.utils.data import DataLoader
 from omegaconf import DictConfig, OmegaConf
-from utils.get_llm_output import GetLLMGoals
+from helper_functions.get_llm_output import GetLLMGoals
 from train_captioner import FeatureToEmbeddingModel
 from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
@@ -122,10 +122,12 @@ def main(args: DictConfig) -> None:
     # for params in captioner.parameters():
     #     params.requires_grad = False
     
-    vae = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim]).to(device)
-    vae.load(args.Imagination_General.vae_checkpoint)
-    vae.to(device)
-    vae.eval()
+    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
+                                 args.M2_Network.label_loss_weight).to(device)
+    model.load(model_dir)
+    model.to(device)
+    model.eval()
     
     for params in vae.parameters():
         params.requires_grad = False
