@@ -74,7 +74,13 @@ def main(args: DictConfig) -> None:
                                  args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
                                  args.M2_Network.label_loss_weight,
                                  args.M2_Network.recon_loss_weight).to(device)
-    optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
+    optimizer = torch.optim.Adam([{'params': model.encoder.parameters()}, 
+                                  {'params': model.z_latent.parameters()}, 
+                                  {'params': model.decoder.parameters()}, 
+                                  {'params': model.classifier.parameters()}, 
+                                  {'params': model.mi_loss_discriminator.parameters()}], 
+                                 lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
+    optimizer_discriminator = torch.optim.Adam(model.discriminator.parameters(), lr=5e-4)
     
     scheduler_model = CosineAnnealingLR(optimizer, T_max=args.M2_Network.epochs)
     
@@ -83,7 +89,7 @@ def main(args: DictConfig) -> None:
     epoch_bar = tqdm(range(args.M2_Network.epochs), desc="Training Progress", unit="epoch")
     for epoch in epoch_bar:
         total_loss, accuracy_labeled, accuracy_unlabeled, mi_losses = (0, 0, 0, 0)
-        classification_losses, reconstruction_errors, z_kl_losses, u_kl_losses  = 0, 0, 0, 0
+        classification_losses, reconstruction_errors, z_kl_losses, u_kl_losses, discriminator_losses  = 0, 0, 0, 0, 0 
         L_losses, U_losses = 0, 0
         iter = 0
         for (unlabelled, unused_labels), (labelled, labels) in zip(unlabelled_data_loader, cycle(labelled_data_loader)):
@@ -92,12 +98,33 @@ def main(args: DictConfig) -> None:
             x_reconstructed, x_z, x_z_mu, x_z_log_var, x_c_logits, x_c = model(x)
             # kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, args.M2_Network.kl_weight_start, args.M2_Network.kl_weight_end, 150, True)
             kl_divergence_weight = 0.01
-            total_loss_L, cls_loss, mi_loss = model.L(x, x_reconstructed, x_z_mu, x_z_log_var, y, x_c_logits, kl_weight=kl_divergence_weight)
+            total_loss_L, cls_loss= model.L(x, x_reconstructed, x_z_mu, x_z_log_var, y, x_c_logits, x_c, kl_weight=kl_divergence_weight)
             # L = model.L(x, y, labelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
             
             u_reconstructed, u_z, u_z_mu, u_z_log_var, u_c_logits, u_c = model(u)
-            total_loss_U, recon_loss, kl_z, kl_c = model.U(u, u_reconstructed, u_z_mu, u_z_log_var, u_c_logits, kl_weight=kl_divergence_weight)
+            total_loss_U, recon_loss, kl_z, kl_c, mi_loss = model.U(u, u_reconstructed, u_z_mu, u_z_log_var, u_c_logits, u_c, kl_weight=kl_divergence_weight)
             # reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
+            
+            
+            # for i in range(3):  # Train discriminator k times
+            # === Train Discriminator ===
+            x_d_loss = model.discriminator.discriminator_loss(x, x_reconstructed)
+            u_d_loss = model.discriminator.discriminator_loss(u, u_reconstructed)
+            d_loss = x_d_loss + u_d_loss
+            optimizer_discriminator.zero_grad()
+            d_loss.backward()
+            # Check gradients
+            for name, param in model.named_parameters():
+                if 'discriminator' in name:
+                    grad_value = param.grad
+
+            optimizer_discriminator.step()
+            
+            x_fake_scores = model.discriminator(x_reconstructed)
+            u_fake_scores = model.discriminator(u_reconstructed)
+            x_adv_loss = model.decoder_loss(x_fake_scores)
+            u_adv_loss = model.decoder_loss(u_fake_scores)
+            adv_loss = x_adv_loss + u_adv_loss
             
             #Classification loss for labelled data
             # Regular cross entropy
@@ -119,7 +146,7 @@ def main(args: DictConfig) -> None:
             
             # #Linearly descrese the alpha
             # alpha = anneal_coefficient(epoch, args.M2_Network.epochs, 500, 50, 200, False)
-            J_alpha = total_loss_L + total_loss_U
+            J_alpha = total_loss_L + total_loss_U + 0.1*adv_loss
             optimizer.zero_grad()
             J_alpha.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -135,6 +162,7 @@ def main(args: DictConfig) -> None:
             L_losses += total_loss_L.item()
             U_losses += total_loss_U.item()
             mi_losses = mi_loss.item()
+            discriminator_losses = d_loss.item()
             
             # # Mask to identify rows where the target is not [0.5, 0.5]
             # mask = ~(torch.all(y == 0.5, dim=1))
@@ -158,6 +186,7 @@ def main(args: DictConfig) -> None:
                    "U_kl_loss" : u_kl_losses/len(unlabelled_data_loader),
                    "L loss" : L_losses/len(unlabelled_data_loader),
                    "U loss" : U_losses/len(unlabelled_data_loader),
+                   "Discriminator loss" : discriminator_losses/len(unlabelled_data_loader),
                    "Mutual info loss" : mi_losses/len(unlabelled_data_loader),
                    "Accuracy" : accuracy_labeled/len(unlabelled_data_loader),
                    "Unlabelled Accuracy" : accuracy_unlabeled/len(unlabelled_data_loader),

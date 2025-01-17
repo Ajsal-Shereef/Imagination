@@ -87,7 +87,7 @@ def parse_arguments():
     parser.add_argument(
         '--episodes',
         type=int,
-        default=6000,
+        default=3000,
         help='Number of episodes to run for data collection (default: 100)'
     )
     parser.add_argument(
@@ -174,7 +174,7 @@ def select_action_q_network(q_network, state, device):
 # 4. Data Collection
 # =============================
 
-def collect_data(env, use_random, episodes, max_steps, device, vae, q_network_path=None):
+def collect_data(env, use_random, episodes, max_steps, device, arg, q_network_path=None):
     """
     Collect transition data from the specified environment using the chosen policy.
     
@@ -190,6 +190,13 @@ def collect_data(env, use_random, episodes, max_steps, device, vae, q_network_pa
         list: Collected transitions as dictionaries.
     """
     transition_captioner = MiniGridTransitionDescriber(5)
+
+    # vae = DeepGenerativeModel([arg.M2_Network.input_dim, arg.M2_General.y_dim, arg.M2_Network.h_dim, \
+    #                              arg.M2_Network.latent_dim, arg.M2_Network.classifier_hidden_dim, arg.M2_Network.feature_encoder_channel_dim], \
+    #                              arg.M2_Network.label_loss_weight).to(device)
+    # vae.load(model_dir)
+    # vae.to(device)
+    # vae.eval()
     
     data = []
     captions = []
@@ -271,12 +278,12 @@ def collect_data(env, use_random, episodes, max_steps, device, vae, q_network_pa
             next_state = np.transpose(next_state['image'], (2, 0, 1))
             # c_state = env.get_unprocesed_obs()
             
-            vae_outputs = vae(torch.tensor(next_state/255).to(device).float())
-            generated = vae.generate(torch.tensor(next_state/255).to(device).float(), torch.tensor([1,0,0]).to(device).float())
-            comparison = torch.empty((2 ,) + torch.tensor(next_state/255).size())
-            comparison[0::2] = torch.tensor(next_state/255).to(device).float()
-            comparison[1::2] = generated
-            save_image(comparison.data, 'test.png', nrow=1, pad_value=0.3)
+            # vae_outputs = vae(torch.tensor(next_state/255).to(device).float())
+            # generated = vae.generate(torch.tensor(next_state/255).to(device).float(), torch.tensor([1,0,0]).to(device).float())
+            # comparison = torch.empty((2 ,) + torch.tensor(next_state/255).size())
+            # comparison[0::2] = torch.tensor(next_state/255).to(device).float()
+            # comparison[1::2] = generated
+            # save_image(comparison.data, 'test.png', nrow=1, pad_value=0.3)
             
             c_frame = env.get_frame()
             # c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
@@ -344,13 +351,6 @@ def main(arg: DictConfig) -> None:
         from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
         env = RGBImgPartialObsWrapper(env)
         # transition_captioner = 
-        
-    model = DeepGenerativeModel([arg.M2_Network.input_dim, arg.M2_General.y_dim, arg.M2_Network.h_dim, \
-                                 arg.M2_Network.latent_dim, arg.M2_Network.classifier_hidden_dim, arg.M2_Network.feature_encoder_channel_dim], \
-                                 arg.M2_Network.label_loss_weight).to(device)
-    model.load(model_dir)
-    model.to(device)
-    model.eval()
     
     # Collect data
     data, captions, class_prob = collect_data(
@@ -360,7 +360,7 @@ def main(arg: DictConfig) -> None:
         episodes=episodes,
         max_steps=max_steps,
         device=device,
-        vae=model
+        arg=arg
     )
     
     # Save data

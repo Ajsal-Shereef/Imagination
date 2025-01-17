@@ -17,7 +17,7 @@ from helper_functions.collect_vae_training_data import collect_data
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_dir = "models/m2_vae/2025-01-14_13-02-43_TSGVV1/model.pt"
+model_dir = "models/m2_vae/2025-01-15_14-08-34_B6SHS9/model.pt"
 
 def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """
@@ -269,7 +269,8 @@ def main(args: DictConfig) -> None:
     
     model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
                                  args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
-                                args.M2_Network.label_loss_weight).to(device)
+                                 args.M2_Network.label_loss_weight,
+                                 args.M2_Network.recon_loss_weight).to(device)
     model.load(model_dir)
     model.to(device)
     model.eval()

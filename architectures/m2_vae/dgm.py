@@ -4,7 +4,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.nn import init
+from torch.nn.utils import spectral_norm
 from architectures.mlp import MLP, Linear
+from architectures.cnn import CNNLayer, CNN
 from architectures.m2_vae.stochastic import GaussianSample
 from architectures.m2_vae.vae import VariationalAutoencoder
 from helper_functions.utils import anneal_coefficient, sample_gumbel_softmax
@@ -32,6 +34,53 @@ class Classifier(nn.Module):
         mu_c = self.mu_c(x)
         log_var_c = self.log_var_c(x)
         return mu_c, log_var_c
+    
+# Define the Discriminator
+class Discriminator(nn.Module):
+    def __init__(self, input_dim):
+        super(Discriminator, self).__init__()
+        self.net = nn.Sequential(
+            spectral_norm(nn.Conv2d(input_dim, 64, kernel_size=4, stride=2, padding=1)),
+            nn.LeakyReLU(0.2),
+            spectral_norm(nn.Conv2d(64, 128, kernel_size=4, stride=2, padding=1)),
+            nn.BatchNorm2d(128),
+            nn.LeakyReLU(0.2),
+            spectral_norm(nn.Conv2d(128, 256, kernel_size=4, stride=2, padding=1)),
+            nn.BatchNorm2d(256),
+            nn.LeakyReLU(0.2),
+            nn.Flatten(),
+            spectral_norm(nn.Linear(256 * 5 * 5, 1))
+        )
+        self.criterion = nn.BCEWithLogitsLoss(reduction='sum')
+
+    def forward(self, x):
+        return self.net(x)
+    
+    def discriminator_loss(self, real_data, fake_data):
+        real_scores = self.net(real_data)
+        fake_scores = self.net(fake_data.detach())
+        real_loss = self.criterion(real_scores.squeeze(), torch.ones_like(real_scores.squeeze()))
+        fake_loss = self.criterion(fake_scores.squeeze(), torch.zeros_like(fake_scores.squeeze()))
+        gp = self.gradient_penalty(real_data, fake_data.detach())
+        return real_loss + fake_loss + 0.10*gp
+    
+    def gradient_penalty(self, real_data, fake_data):
+        alpha = torch.rand(real_data.size(0), 1, 1, 1).to(real_data.device)
+        interpolated = alpha * real_data + (1 - alpha) * fake_data
+        interpolated.requires_grad_(True)
+
+        d_interpolated = self(interpolated)
+        gradients = torch.autograd.grad(
+            outputs=d_interpolated,
+            inputs=interpolated,
+            grad_outputs=torch.ones_like(d_interpolated),
+            create_graph=True,
+            retain_graph=True,
+            only_inputs=True
+        )[0]
+        gradients = gradients.view(gradients.size(0), -1)
+        penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+        return penalty
 
 
 class DeepGenerativeModel(nn.Module):
@@ -58,13 +107,16 @@ class DeepGenerativeModel(nn.Module):
         # self.classifier = GaussianSample(self.h_dim, self.z_dim)
         self.classifier = Linear(self.h_dim, self.y_dim)
         
-        self.descriminator = Linear(self.z_dim + self.y_dim, 1, dropout_prob=0.2)
+        self.mi_loss_discriminator = Linear(self.z_dim + self.y_dim, 1)
         
         self.register_buffer('c_prior_mu', torch.full((self.z_dim,), 1.0 / self.z_dim))
         self.register_buffer('c_prior_logvar', torch.zeros(self.z_dim))  # Log variance of 0
         
         self.reconstruction_loss_function = nn.BCELoss(reduction='none')
         self.label_loss_function = nn.CrossEntropyLoss()
+        
+        self.discriminator = Discriminator(self.x_dim)
+        self.discriminator_criterion = nn.BCEWithLogitsLoss(reduction='sum')
 
 
     def forward(self, x):
@@ -121,6 +173,9 @@ class DeepGenerativeModel(nn.Module):
     #     x = self.decoder(torch.cat([z, y], dim=1))
     #     return x
     
+    def decoder_loss(self, fake_scores):
+        return self.discriminator_criterion(fake_scores, torch.ones_like(fake_scores))
+    
     def mi_loss(self, z_samples, c_samples):
         # Joint samples
         z_joint = z_samples  # [batch_size, latent_dim_z]
@@ -130,10 +185,10 @@ class DeepGenerativeModel(nn.Module):
         c_marginal = c_shuffled
         # Compute scores for joint samples
         joint_latent = torch.cat([z_joint, c_joint], dim=-1)
-        s_joint = self.descriminator(joint_latent)  # [batch_size, 1]
+        s_joint = self.mi_loss_discriminator(joint_latent)  # [batch_size, 1]
         # Compute scores for marginal samples
         marginal_latent = torch.cat([z_joint, c_marginal], dim=-1)
-        s_marginal = self.descriminator(marginal_latent)  # [batch_size, 1]
+        s_marginal = self.mi_loss_discriminator(marginal_latent)  # [batch_size, 1]
 
         # Donsker-Varadhan representation of MI
         joint_loss = s_joint.mean()  # Expectation over joint samples
@@ -157,7 +212,7 @@ class DeepGenerativeModel(nn.Module):
         kl = kl_per_sample.mean()
         return kl
     
-    def L(self, x, x_recon, mu_z, logvar_z, y, logits_c, kl_weight):
+    def L(self, x, x_recon, mu_z, logvar_z, y, logits_c, x_c, kl_weight):
         #Reconstruction loss
         recon_loss = F.mse_loss(x_recon, x, reduction='none')
         recon_loss = torch.mean(recon_loss.sum(dim=[1, 2, 3]))
@@ -172,13 +227,13 @@ class DeepGenerativeModel(nn.Module):
         x_reconstructed_label_loss = self.label_loss_function(c_logits, y)
         
         # Mutual information loss to disentagle z and c
-        mi_loss = self.mi_loss(mu_z, y)
+        mi_loss = self.mi_loss(mu_z, x_c)
         # mi_loss = 0
         
         total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + x_reconstructed_label_loss + mi_loss
-        return total_loss, label_loss, mi_loss
+        return total_loss, label_loss
     
-    def U(self, x, x_recon, mu_z, logvar_z, logits_c, kl_weight):
+    def U(self, x, x_recon, mu_z, logvar_z, logits_c, u_c, kl_weight):
         #Reconstruction loss
         recon_loss = F.mse_loss(x_recon, x, reduction='none')
         recon_loss = torch.mean(recon_loss.sum(dim=[1, 2, 3]))
@@ -191,8 +246,11 @@ class DeepGenerativeModel(nn.Module):
         _, _, _, _, recon_logit, _ = self.forward(x_recon)
         reconstructed_label_loss = self.label_loss_function(recon_logit, torch.argmax(logits_c, dim=-1))
         
-        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + reconstructed_label_loss
-        return total_loss, recon_loss, kl_z, kl_c
+        # Mutual information loss to disentagle z and c
+        mi_loss = self.mi_loss(mu_z, u_c)
+        
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + reconstructed_label_loss + mi_loss
+        return total_loss, recon_loss, kl_z, kl_c, mi_loss
     
     # #Loss unction for labelled data
     # def L(self, x, x_recon, mu_z, logvar_z, mu_c, logvar_c, y, sigma2=1.0, sigma_y2=1.0, kl_weight=1):

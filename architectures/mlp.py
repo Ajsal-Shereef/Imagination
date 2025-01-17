@@ -151,8 +151,8 @@ class Linear(nn.Module):
         """
         x = self.linear_layer(x)
         x = self.batch_norm(x)
-        x = self.post_activation(x)
         x = self.dropout_layer(x)
+        x = self.post_activation(x)
         return x    
 
 

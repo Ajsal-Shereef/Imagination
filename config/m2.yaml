@@ -18,4 +18,4 @@ M2_Network:
   kl_weight_end : 0.05
   save_freequency : 100
   label_loss_weight : 10
-  recon_loss_weight : 3
+  recon_loss_weight : 1
