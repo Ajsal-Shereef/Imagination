@@ -90,6 +90,10 @@ def sample_gumbel_softmax(c_logit, training=True, tau=0.1):
         return y
     else:
         return F.softmax((c_logit)/tau, dim=-1)
+    
+def logsumexp_stable(x, dim):
+    max_val, _ = torch.max(x, dim=dim, keepdim=True)
+    return max_val.squeeze() + torch.log(torch.sum(torch.exp(x - max_val), dim=dim))
 
 def custom_soft_action_encoding(action, num_action=2, dim=24):
     if dim % num_action != 0:

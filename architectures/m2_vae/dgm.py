@@ -4,12 +4,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.nn import init
+from geomloss import SamplesLoss
 from torch.nn.utils import spectral_norm
 from architectures.mlp import MLP, Linear
 from architectures.cnn import CNNLayer, CNN
 from architectures.m2_vae.stochastic import GaussianSample
 from architectures.m2_vae.vae import VariationalAutoencoder
-from helper_functions.utils import anneal_coefficient, sample_gumbel_softmax
+from helper_functions.utils import sample_gumbel_softmax, logsumexp_stable
 # from architectures.m2_vae.distributions import log_standard_categorical
 from architectures.m2_vae.vae import FeatureEncoder, Decoder, LadderEncoder, LadderDecoder
 
@@ -49,9 +50,10 @@ class Discriminator(nn.Module):
             nn.BatchNorm2d(256),
             nn.LeakyReLU(0.2),
             nn.Flatten(),
-            spectral_norm(nn.Linear(256 * 5 * 5, 1))
+            spectral_norm(nn.Linear(256 * 5 * 5, 1)),
+            nn.Sigmoid()
         )
-        self.criterion = nn.BCEWithLogitsLoss(reduction='sum')
+        self.criterion = nn.BCELoss(reduction='sum')
 
     def forward(self, x):
         return self.net(x)
@@ -212,7 +214,7 @@ class DeepGenerativeModel(nn.Module):
         kl = kl_per_sample.mean()
         return kl
     
-    def L(self, x, x_recon, mu_z, logvar_z, y, logits_c, x_c, kl_weight):
+    def L(self, x, x_recon, mu_z, logvar_z, y, logits_c, x_c, ws_weight, kl_weight):
         #Reconstruction loss
         recon_loss = F.mse_loss(x_recon, x, reduction='none')
         recon_loss = torch.mean(recon_loss.sum(dim=[1, 2, 3]))
@@ -229,11 +231,14 @@ class DeepGenerativeModel(nn.Module):
         # Mutual information loss to disentagle z and c
         mi_loss = self.mi_loss(mu_z, x_c)
         # mi_loss = 0
+
+        # Wasserstein loss
+        wasserstein_loss = self.sliced_wasserstein_distance(x, x_recon)
         
-        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + x_reconstructed_label_loss + mi_loss
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + x_reconstructed_label_loss + mi_loss + ws_weight*wasserstein_loss
         return total_loss, label_loss
     
-    def U(self, x, x_recon, mu_z, logvar_z, logits_c, u_c, kl_weight):
+    def U(self, x, x_recon, mu_z, logvar_z, logits_c, u_c, ws_weight, kl_weight):
         #Reconstruction loss
         recon_loss = F.mse_loss(x_recon, x, reduction='none')
         recon_loss = torch.mean(recon_loss.sum(dim=[1, 2, 3]))
@@ -248,9 +253,60 @@ class DeepGenerativeModel(nn.Module):
         
         # Mutual information loss to disentagle z and c
         mi_loss = self.mi_loss(mu_z, u_c)
+
+        # Wasserstein loss
+        wasserstein_loss = self.sliced_wasserstein_distance(x, x_recon)
         
-        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + reconstructed_label_loss + mi_loss
-        return total_loss, recon_loss, kl_z, kl_c, mi_loss
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + reconstructed_label_loss + mi_loss + ws_weight*wasserstein_loss
+        return total_loss, recon_loss, kl_z, kl_c, mi_loss, wasserstein_loss
+    
+    def sliced_wasserstein_distance(self, real_samples, generated_samples, num_projections=100, device='cuda'):
+        # Flatten the samples
+        real_flat = real_samples.view(real_samples.size(0), -1)
+        gen_flat = generated_samples.view(generated_samples.size(0), -1)
+
+        eps = 1e-7  # Small constant to prevent division by zero
+
+        # Generate random projections
+        projections = torch.randn(num_projections, real_flat.size(1), device=device)
+        projections = F.normalize(projections, dim=1)  # Normalize to have unit length
+
+        # Project the samples onto the random directions
+        real_projections = real_flat @ projections.t()
+        gen_projections = gen_flat @ projections.t()
+
+        # Sort the projected samples
+        real_projections, _ = torch.sort(real_projections, dim=0)
+        gen_projections, _ = torch.sort(gen_projections, dim=0)
+
+        # Compute the SWD
+        swd = torch.mean((real_projections - gen_projections) ** 2)
+
+        return swd
+
+    
+    # def sinkhorn_loss(self, real_samples, generated_samples):
+    #     # Flatten and normalize samples
+    #     real_flat = real_samples.view(real_samples.size(0), -1)
+    #     gen_flat = generated_samples.view(generated_samples.size(0), -1)
+
+    #     # Optionally, normalize the data
+    #     real_flat = (real_flat - real_flat.mean(dim=1, keepdim=True)) / (real_flat.std(dim=1, keepdim=True) + 1e-8)
+    #     gen_flat = (gen_flat - gen_flat.mean(dim=1, keepdim=True)) / (gen_flat.std(dim=1, keepdim=True) + 1e-8)
+
+    #     # Use SamplesLoss with appropriate parameters
+    #     sinkhorn_loss_fn = SamplesLoss(
+    #         loss='sinkhorn',
+    #         p=2,
+    #         blur=0.05,         # Adjust blur (epsilon ** 0.5)
+    #         scaling=0.9,
+    #         debias=False       # Set to False if you encounter issues with debiasing
+    #     )
+
+    #     sinkhorn_dist = sinkhorn_loss_fn(real_flat, gen_flat)
+
+    #     return sinkhorn_dist
+
     
     # #Loss unction for labelled data
     # def L(self, x, x_recon, mu_z, logvar_z, mu_c, logvar_c, y, sigma2=1.0, sigma_y2=1.0, kl_weight=1):

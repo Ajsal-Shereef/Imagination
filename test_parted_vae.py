@@ -17,7 +17,7 @@ from helper_functions.collect_vae_training_data import collect_data
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_dir = "models/m2_vae/2025-01-15_14-08-34_B6SHS9/model.pt"
+model_dir = "models/m2_vae/2025-01-18_23-22-22_1OCUFR/model.pt"
 
 def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """
