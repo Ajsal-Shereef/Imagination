@@ -73,54 +73,52 @@ class FeatureEncoder(nn.Module):
 
 class Decoder(nn.Module):
     def __init__(self, dims):
-        """
-        Generative network
-        Generates samples from the original distribution
-        p(x) by transforming a latent representation, e.g.
-        by finding p_θ(x|z).
-
-        :param dims: dimensions of the networks
-            given by the number of neurons on the form
-            [latent_dim, [hidden_dims], input_dim].
-        """
         super(Decoder, self).__init__()
 
         [z_dim, y_dim, h_dim, x_dim] = dims
         self.z_dim = z_dim
         self.num_goals = y_dim
-        self.fc_cnn1 = Linear(z_dim, h_dim, dropout_prob=0.20)
-        self.fc_cnn2 = Linear(h_dim, 1600, dropout_prob=0.20)
+        self.x_dim = x_dim
 
-        # FiLM layers for conditioning
-        self.film1 = FiLMLayer(1600, y_dim)
-        self.film2 = FiLMLayer(32*9*9, y_dim)
-        self.film3 = FiLMLayer(16*19*19, y_dim)
+        # Initial linear layers processing z
+        self.fc1 = nn.Linear(z_dim, h_dim)
+        self.fc2 = nn.Linear(h_dim, 1600)  # Output size for reshaping
+        self.fc2_reshape_dims = (-1, 64, 5, 5)
 
-        # Transposed convolutional layers for upsampling
-        self.deconv1 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1)  # 64x5x5 -> 32x9x9
-        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=3, stride=2, padding=0)  # 32x16x16 -> 16x19x19
-        self.deconv3 = nn.ConvTranspose2d(16, x_dim, kernel_size=4, stride=2, padding=0)  # 16x40x40 -> x_dimx40x40
-        
-        # Activation function
-        self.intermediate_activation = nn.LeakyReLU()
-        self.last_activation = nn.Sigmoid()
+        # Deconvolutional layers
+        self.deconv1 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
+        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1)
 
+        # Gating mechanism
+        self.gate_c = nn.Linear(y_dim, 16 * 20 * 20)  # Generate gating weights from c
+
+        # Final deconvolution layer
+        self.deconv3 = nn.ConvTranspose2d(16, self.x_dim, kernel_size=4, stride=2, padding=1)
+
+        # Activation functions
+        self.relu = nn.ReLU()
+        self.sigmoid = nn.Sigmoid()
 
     def forward(self, z, y):
-        # Create soft action encoding for labels
-        # y = torch.tensor(custom_soft_action_encoding(y, self.num_goals, self.z_dim)).to(z.device).float()
+        # Process z through initial layers
+        x = self.relu(self.fc1(z))
+        x = self.relu(self.fc2(x))
+        x = x.view(self.fc2_reshape_dims)
 
-        # Initial linear layers
-        linear_feature = self.fc_cnn1(z)
-        linear_feature = self.fc_cnn2(linear_feature)
+        # Deconvolution layers without conditioning on c
+        x = self.relu(self.deconv1(x))
+        x = self.relu(self.deconv2(x))
 
-        # Condition each layer with FiLM
-        x = self.film1(linear_feature, y)
-        x = self.intermediate_activation(self.deconv1(x.view(-1, 64, 5, 5)))  # ConvTranspose2d(64 -> 32)
-        x = self.film2(x.view(-1, 32*9*9), y)
-        x = self.intermediate_activation(self.deconv2(x.view(-1, 32, 9, 9)))  # ConvTranspose2d(32 -> 16)
-        x = self.film3(x.view(-1, 16*19*19), y)
-        x = self.last_activation(self.deconv3(x.view(-1, 16, 19, 19)))  # ConvTranspose2d(16 -> x_dim)
+        # Generate gating weights from c
+        gate = torch.sigmoid(self.gate_c(y))
+        gate = gate.view(-1, 16, 20, 20)
+
+        # Apply gating to x
+        x = x * gate  # Element-wise multiplication
+
+        # Final deconvolution layer
+        x = self.sigmoid(self.deconv3(x))
+
         return x
 
 

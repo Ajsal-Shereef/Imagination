@@ -177,18 +177,23 @@ class Visualizer:
     def swap(self, images, device):
         count = len(images)
         image_shape = images.size()[1:]
-        latent_dist = self.model.encode(images.to(device).float())
-        z = latent_dist['z'][0]
-        u = latent_dist['u'][0]
+        x_reconstructed, z_latent, z_mu, z_log_var, c_logits, c = self.model(images.to(device).float())
+        z = z_mu
+        u = c
+        z_dim = z_mu[0].shape[0]
         latents = list()
         for j in range(count):
             for i in range(count):
                 latents.append(torch.cat([z[j], u[i]]).unsqueeze(0))
+        # Convert latents to a tensor
+        latents_tensor = torch.stack(latents).squeeze(1)
+        z_tensor = latents_tensor[:, :z_dim]  # Take the first 16 dimensions
+        u_tensor = latents_tensor[:, z_dim:]  # Take the remaining 3 dimensions
         all_images = torch.zeros(count+1, count+1, *image_shape)
         all_images[0, 1:] = images
         all_images[1:, 0] = images
         # all_images[torch.arange(count+1, (count+1)*(count+1), count+1)] = images
-        all_images[1:, 1:] = self._decode_latents(torch.cat(latents, dim=0)).view(count, count, *image_shape)
+        all_images[1:, 1:] = self._decode_latents(z_tensor, u_tensor).view(count, count, *image_shape)
         grid = make_grid(all_images.view(-1, *image_shape), nrow=count+1, pad_value=0)
         my_save_image(grid, self.root + 'swap.png', resize=False)
 
@@ -271,6 +276,6 @@ class Visualizer:
                     mean, logvar = self.model.u_prior_means[priors_indices].flatten(), self.model.u_prior_logvars[priors_indices].flatten()
                     self.traverse_with_fix_c(disc_idx, i, mean, logvar, null, null, path=path, resize=False)
 
-    def _decode_latents(self, latent_samples):
+    def _decode_latents(self, z_dim, c_dim):
         with torch.no_grad():
-            return self.model.decode(latent_samples).cpu()
+            return self.model.decoder(z_dim, c_dim).cpu()
