@@ -17,7 +17,7 @@ from helper_functions.collect_vae_training_data import collect_data
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_dir = "models/m2_vae/2025-01-19_22-55-20_O5KQGM/model.pt"
+model_dir = "models/m2_vae/2025-01-21_19-21-05_WQN9ES/model.pt"
 
 def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """
@@ -292,10 +292,13 @@ def main(args: DictConfig) -> None:
     
     # Initialize dataset and dataloader
     dataloader = TwoListDataset(datasets, class_probs)
+    for batch, labels in train_loader:
+        viz.reconstructions(data=batch, label=labels.to(device))
+        break
     train_loader = DataLoader(dataloader, batch_size=10, shuffle=True)
+
     for batch, labels in train_loader:
         break
-    viz.reconstructions(data=batch, label=labels.to(device))
     viz.swap(images=batch, device=device)
     # latent = visualize_latent_space(model, dataloader, device, latent, labels, method='tsne', save_path=data_dir)
     

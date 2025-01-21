@@ -71,56 +71,109 @@ class FeatureEncoder(nn.Module):
 #         beta = self.beta(y)
 #         return gamma.view(-1, 1, 1, 1) * x + beta.view(-1, 1, 1, 1)
 
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+class FiLMLayer(nn.Module):
+    def __init__(self, num_features, c_dim):
+        """
+        Feature-wise Linear Modulation (FiLM) layer.
+
+        Args:
+            num_features (int): Number of features in the input tensor.
+            c_dim (int): Dimensionality of the class variable c.
+        """
+        super(FiLMLayer, self).__init__()
+        self.num_features = num_features
+        self.c_dim = c_dim
+        # Linear layers to compute scale and shift parameters from c
+        self.scale_fc = nn.Linear(c_dim, num_features)
+        self.shift_fc = nn.Linear(c_dim, num_features)
+
+    def forward(self, x, c):
+        # x: Tensor of shape [batch_size, num_features]
+        # c: Tensor of shape [batch_size, c_dim]
+        scale = self.scale_fc(c)  # Compute scale (gamma) parameters
+        shift = self.shift_fc(c)  # Compute shift (beta) parameters
+        # Apply FiLM modulation
+        return x * scale + shift
+
 class Decoder(nn.Module):
     def __init__(self, dims):
+        """
+        Generative network
+        Generates samples from the original distribution
+        p(x) by transforming a latent representation, e.g.,
+        by finding p_θ(x|z).
+
+        :param dims: dimensions of the networks
+            given by the number of neurons in the form
+            [z_dim, y_dim, h_dim, x_dim].
+        """
         super(Decoder, self).__init__()
 
         [z_dim, y_dim, h_dim, x_dim] = dims
         self.z_dim = z_dim
-        self.num_goals = y_dim
+        self.y_dim = y_dim
+        self.h_dim = h_dim
         self.x_dim = x_dim
 
-        # Initial linear layers processing z
-        self.fc1 = nn.Linear(z_dim, h_dim)
-        self.fc2 = nn.Linear(h_dim, 1600)  # Output size for reshaping
-        self.fc2_reshape_dims = (-1, 64, 5, 5)
+        # First layer focuses on z only
+        self.fc_cnn1 = nn.Linear(z_dim, h_dim)
+        self.fc_cnn2 = nn.Linear(h_dim, 1600)  # Outputs to match [batch_size, 64, 5, 5]
 
-        # Deconvolutional layers
-        self.deconv1 = nn.ConvTranspose2d(64, 32, kernel_size=3, stride=2, padding=1, output_padding=1)
-        self.deconv2 = nn.ConvTranspose2d(32, 16, kernel_size=4, stride=2, padding=1)
+        # FiLM layer for second layer modulation
+        self.film2 = FiLMLayer(32 * 10 * 10, y_dim)  # Modulates after deconv1
 
-        # Gating mechanism
-        self.gate_c = nn.Linear(y_dim, 16 * 20 * 20)  # Generate gating weights from c
+        # Gating mechanism for the third layer
+        self.gate_fc3 = nn.Linear(y_dim, 16 * 20 * 20)
 
-        # Final deconvolution layer
-        self.deconv3 = nn.ConvTranspose2d(16, self.x_dim, kernel_size=4, stride=2, padding=1)
+        # Transposed convolutional layers for upsampling
+        self.deconv1 = nn.ConvTranspose2d(
+            64, 32, kernel_size=4, stride=2, padding=1
+        )  # 64x5x5 -> 32x10x10
+        self.deconv2 = nn.ConvTranspose2d(
+            32, 16, kernel_size=4, stride=2, padding=1
+        )  # 32x10x10 -> 16x20x20
+        self.deconv3 = nn.ConvTranspose2d(
+            16, x_dim, kernel_size=4, stride=2, padding=1
+        )  # 16x20x20 -> x_dimx40x40
 
         # Activation functions
-        self.relu = nn.ReLU()
+        self.leaky_relu = nn.LeakyReLU()
         self.sigmoid = nn.Sigmoid()
 
     def forward(self, z, y):
-        # Process z through initial layers
-        x = self.relu(self.fc1(z))
-        x = self.relu(self.fc2(x))
-        x = x.view(self.fc2_reshape_dims)
+        batch_size = z.size(0)
 
-        # Deconvolution layers without conditioning on c
-        x = self.relu(self.deconv1(x))
-        x = self.relu(self.deconv2(x))
+        # First layer: focuses on z only
+        linear_feature = self.leaky_relu(self.fc_cnn1(z))
+        linear_feature = self.leaky_relu(self.fc_cnn2(linear_feature))
+        x = linear_feature.view(batch_size, 64, 5, 5)  # Reshape to [batch_size, 64, 5, 5]
 
-        # Generate gating weights from c
-        gate = torch.sigmoid(self.gate_c(y))
-        gate = gate.view(-1, 16, 20, 20)
+        # First deconvolution layer (no conditioning)
+        x = self.leaky_relu(self.deconv1(x))  # Output shape: [batch_size, 32, 10, 10]
 
-        # Apply gating to x
-        x = x * gate  # Element-wise multiplication
+        # Flatten x for FiLM layer
+        x_flat = x.view(batch_size, -1)  # Shape: [batch_size, 32*10*10]
 
-        # Final deconvolution layer
-        x = self.sigmoid(self.deconv3(x))
+        # Second layer modulated with FiLM using y
+        x_film = self.film2(x_flat, y)
+        x = x_film.view(batch_size, 32, 10, 10)  # Reshape back to [batch_size, 32, 10, 10]
+
+        # Second deconvolution layer
+        x = self.leaky_relu(self.deconv2(x))  # Output shape: [batch_size, 16, 20, 20]
+
+        # Apply gating mechanism before third deconvolution
+        gate_values = torch.sigmoid(self.gate_fc3(y))  # Shape: [batch_size, 16*20*20]
+        gate_values = gate_values.view(batch_size, 16, 20, 20)
+        x = x * gate_values  # Element-wise multiplication (gating)
+
+        # Third deconvolution layer
+        x = self.sigmoid(self.deconv3(x))  # Output shape: [batch_size, x_dim, 40, 40]
 
         return x
-
 
 # class Decoder(nn.Module):
 #     def __init__(self, dims):

@@ -28,7 +28,7 @@ class Visualizer:
         with torch.no_grad():
             x_reconstructed, x_z, x_z_mu, x_z_log_var, x_mu_c, x_logvar_c = self.model(data.float())
             # label_flipped = torch.flip(label, dims=[-1])
-            label_flipped = torch.tensor([1,0,0]).to(x_reconstructed.device).to(float)
+            label_flipped = torch.stack([torch.tensor([0, 1, 0])] * data.shape[0]).to(x_reconstructed.device).to(float)
             # label = torch.rand((900,2)).to('cuda')
             # syn_data = torch.rand(data.shape).to('cuda')
             recon_data_flipped = self.model.generate(data.float(), label_flipped.float())

@@ -20,6 +20,7 @@ from scipy.optimize import linear_sum_assignment
 from sklearn.model_selection import train_test_split
 from torch.optim.lr_scheduler import ReduceLROnPlateau, CosineAnnealingLR
 from architectures.m2_vae.dgm import DeepGenerativeModel
+from architectures.m2_vae.dgm import MineNetwork
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
@@ -74,13 +75,10 @@ def main(args: DictConfig) -> None:
                                  args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
                                  args.M2_Network.label_loss_weight,
                                  args.M2_Network.recon_loss_weight).to(device)
-    optimizer = torch.optim.Adam([{'params': model.encoder.parameters()}, 
-                                  {'params': model.z_latent.parameters()}, 
-                                  {'params': model.decoder.parameters()}, 
-                                  {'params': model.classifier.parameters()}, 
-                                  {'params': model.mi_loss_discriminator.parameters()}], 
-                                 lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
-    # optimizer_discriminator = torch.optim.Adam(model.discriminator.parameters(), lr=5e-4)
+    optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
+    # Initialize the network and optimizer
+    mine_network = MineNetwork(input_size=args.M2_Network.latent_dim + args.M2_General.y_dim, hidden_size=[128,32])
+    optimizer = torch.optim.Adam(mine_network.parameters(), lr=args.M2_Network.lr_model)
     
     scheduler_model = CosineAnnealingLR(optimizer, T_max=args.M2_Network.epochs)
     
