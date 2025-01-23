@@ -94,13 +94,13 @@ class MineNetwork(nn.Module):
         inputs = torch.cat((x, y), dim=1)
         return self.net(inputs)
     
-    def mine_loss(self, T_joint, T_marginal):
+    def mine_estimate(self, T_joint, T_marginal):
         # Compute the loss using the Donsker-Varadhan representation
         # T_joint: Output of the network for joint samples (paired)
         # T_marginal: Output for marginal samples (unpaired)
         joint_term = torch.mean(T_joint)
         marginal_term = torch.mean(torch.exp(T_marginal))
-        loss = - (joint_term - torch.log(marginal_term + 1e-6))
+        loss = (joint_term - torch.log(marginal_term + 1e-6) + 1e-6)
         return loss
 
 
@@ -127,10 +127,10 @@ class DeepGenerativeModel(nn.Module):
         self.decoder = Decoder([self.z_dim, self.y_dim, self.h_dim, self.x_dim])
         # self.classifier = GaussianSample(self.h_dim, self.z_dim)
         self.classifier = MLP(self.h_dim, self.y_dim, [64])
-        self.z_projection = Linear(self.z_dim, 32)
-        self.c_projection = Linear(self.y_dim, 32)
+        # self.z_projection = Linear(self.z_dim, 32)
+        # self.c_projection = Linear(self.y_dim, 32)
         
-        self.mi_loss_discriminator = MLP(self.z_dim + self.y_dim, 1, [16])
+        # self.mi_loss_discriminator = MLP(self.z_dim + self.y_dim, 1, [16])
 
         # self.discriminator = Discriminator(self.x_dim)
         # self.discriminator_criterion = nn.BCEWithLogitsLoss(reduction='sum')
@@ -194,31 +194,31 @@ class DeepGenerativeModel(nn.Module):
     #     x = self.decoder(torch.cat([z, y], dim=1))
     #     return x
     
-    def decoder_loss(self, fake_scores):
-        return self.discriminator_criterion(fake_scores, torch.ones_like(fake_scores))
+    # def decoder_loss(self, fake_scores):
+    #     return self.discriminator_criterion(fake_scores, torch.ones_like(fake_scores))
     
-    def mi_loss(self, z_samples, c_samples, temperature=0.07):
-        # Projection heads
-        z_proj = self.z_projection(z_samples)  # [batch_size, projection_dim]
-        c_proj = self.c_projection(c_samples)  # [batch_size, projection_dim]
+    # def mi_loss(self, z_samples, c_samples, temperature=0.07):
+    #     # Projection heads
+    #     z_proj = self.z_projection(z_samples)  # [batch_size, projection_dim]
+    #     c_proj = self.c_projection(c_samples)  # [batch_size, projection_dim]
 
-        # Normalize projections
-        z_proj = F.normalize(z_proj, dim=1)
-        c_proj = F.normalize(c_proj, dim=1)
+    #     # Normalize projections
+    #     z_proj = F.normalize(z_proj, dim=1)
+    #     c_proj = F.normalize(c_proj, dim=1)
 
-        # Compute similarity scores (dot product)
-        scores = torch.matmul(z_proj, c_proj.t()) / temperature  # [batch_size, batch_size]
+    #     # Compute similarity scores (dot product)
+    #     scores = torch.matmul(z_proj, c_proj.t()) / temperature  # [batch_size, batch_size]
 
-        # Positive pairs are on the diagonal
-        pos_mask = torch.eye(z_samples.size(0), device=z_samples.device)
+    #     # Positive pairs are on the diagonal
+    #     pos_mask = torch.eye(z_samples.size(0), device=z_samples.device)
 
-        # Separate logits into positive and negative
-        pos_logits = scores * pos_mask  # Diagonal values are the positive logits
-        neg_logits = scores * (1 - pos_mask)  # Off-diagonal values are the negatives
+    #     # Separate logits into positive and negative
+    #     pos_logits = scores * pos_mask  # Diagonal values are the positive logits
+    #     neg_logits = scores * (1 - pos_mask)  # Off-diagonal values are the negatives
 
-        # Compute the loss
-        loss = torch.logsumexp(neg_logits, dim=1) - torch.logsumexp(pos_logits, dim=1)
-        return loss.mean()
+    #     # Compute the loss
+    #     loss = torch.logsumexp(neg_logits, dim=1) - torch.logsumexp(pos_logits, dim=1)
+    #     return loss.mean()
 
     
     # def mi_loss(self, z_samples, c_samples):
@@ -267,29 +267,30 @@ class DeepGenerativeModel(nn.Module):
         kl_c = self.kl_divergence_c(logits_c)
         label_loss = self.label_loss_function(logits_c, y)
         
-        #Forcing the recosntruction to have the same label
-        x_reconstructed, z_latent, z_mu, z_log_var, c_logits, c = self.forward(x_recon)
+        #Cycle consistency loss
+        _, _, z_mu, _, c_logits, _ = self.forward(x_recon)
         x_reconstructed_label_loss = self.label_loss_function(c_logits, y)
+        x_reconstructed_z_loss = F.mse_loss(z_mu, mu_z)
+        cycle_loss = x_reconstructed_z_loss + x_reconstructed_label_loss
 
         #Creating some auxiliary losses
         # Generate random labels
         labels = F.one_hot(torch.randint(0, self.y_dim, (x_recon.shape[0],)), num_classes=self.y_dim)
-        generated_images = self.generate(x_recon, labels.to(device).float())
-        _, _, _, _, gen_logits, _ = self.forward(generated_images)
-        aux_reconstruction_loss = F.mse_loss(generated_images, x, reduction='none')
-        aux_reconstruction_loss = torch.mean(aux_reconstruction_loss.sum(dim=[1, 2, 3]))
+        generated_images = self.generate(x, labels.to(device).float())
+        _, _, z_mu, _, gen_logits, _ = self.forward(generated_images)
+        aux_reconstruction_loss = F.mse_loss(z_mu, mu_z)
         aux_classification_loss = self.label_loss_function(gen_logits, labels.to(device).float())
+        aux_loss = aux_reconstruction_loss + aux_classification_loss
         
         # Mutual information loss to disentagle z and c
-        mi_loss = self.mi_loss(mu_z, x_c)
+        # mi_loss = self.mi_loss(mu_z, x_c)
         # mi_loss = 0
 
         # Wasserstein loss
         wasserstein_loss = self.sliced_wasserstein_distance(x, x_recon)
         # wasserstein_loss = 0
         
-        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + x_reconstructed_label_loss + \
-            mi_loss + ws_weight*wasserstein_loss + 0.00*(aux_classification_loss)
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + cycle_loss + ws_weight*wasserstein_loss + aux_loss
         return total_loss, label_loss
     
     def U(self, x, x_recon, mu_z, logvar_z, logits_c, x_c, ws_weight, kl_weight):
@@ -302,11 +303,13 @@ class DeepGenerativeModel(nn.Module):
         kl_c = self.kl_divergence_c(logits_c)
         
         #Self supervised label loss
-        _, _, _, _, recon_logit, _ = self.forward(x_recon)
+        _, _, z_mu, _, recon_logit, _ = self.forward(x_recon)
         reconstructed_label_loss = self.label_loss_function(recon_logit, torch.argmax(logits_c, dim=-1))
+        x_reconstructed_z_loss = F.mse_loss(z_mu, mu_z)
+        cycle_loss = x_reconstructed_z_loss + reconstructed_label_loss
         
         # Mutual information loss to disentagle z and c
-        mi_loss = self.mi_loss(mu_z, x_c)
+        # mi_loss = self.mi_loss(mu_z, x_c)
         # mi_loss = 0
 
         # Wasserstein loss
@@ -316,15 +319,14 @@ class DeepGenerativeModel(nn.Module):
         #Creating some auxiliary losses
         # Generate random labels
         labels = F.one_hot(torch.randint(0, self.y_dim, (x_recon.shape[0],)), num_classes=self.y_dim)
-        generated_images = self.generate(x_recon, labels.to(device).float())
-        _, _, _, _, gen_logits, _ = self.forward(generated_images)
-        aux_reconstruction_loss = F.mse_loss(generated_images, x, reduction='none')
-        aux_reconstruction_loss = torch.mean(aux_reconstruction_loss.sum(dim=[1, 2, 3]))
+        generated_images = self.generate(x, labels.to(device).float())
+        _, _, z_mu, _, gen_logits, _ = self.forward(generated_images)
+        aux_reconstruction_loss = F.mse_loss(z_mu, mu_z)
         aux_classification_loss = self.label_loss_function(gen_logits, labels.to(device).float())
+        aux_loss = aux_reconstruction_loss + aux_classification_loss
         
-        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + reconstructed_label_loss + mi_loss + \
-            ws_weight*wasserstein_loss + 0.00*(aux_classification_loss)
-        return total_loss, recon_loss, kl_z, kl_c, mi_loss, wasserstein_loss
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + cycle_loss + ws_weight*wasserstein_loss + aux_loss
+        return total_loss, recon_loss, kl_z, kl_c, wasserstein_loss
     
     def sliced_wasserstein_distance(self, real_samples, generated_samples, num_projections=100, device='cuda'):
         # Flatten the samples

@@ -23,7 +23,7 @@ is_agent = False
 @hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     if args.General.env ==  "SimplePickup":
-        from env.env import SimplePickup, generate_caption, MiniGridTransitionDescriber, calculate_probabilities
+        from env.env import SimplePickup
         env = SimplePickup(max_steps=args.General.max_ep_len, agent_view_size=5, size=7, render_mode="rgb_array")
         from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
         env = RGBImgPartialObsWrapper(env)
@@ -74,28 +74,21 @@ def main(args: DictConfig) -> None:
                     buffer_size = args.Imagination_General.buffer_size)
     #Loading the pretrained weight of sac agent.
     agent.load_params(args.Imagination_General.agent_checkpoint)
+    agent.eval()
     #Freezing the SAC agent weight to prevent updating
     for params in agent.parameters():
         params.requires_grad = False
         
-    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.num_goals, args.M2_Network.latent_dim]).to(device)
+    model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
+                                 args.M2_Network.label_loss_weight,
+                                 args.M2_Network.recon_loss_weight).to(device)
     model.load(args.Imagination_General.vae_checkpoint)
     model.to(device)
     model.eval()
     
     for params in model.parameters():
         params.requires_grad = False
-        
-    imagination_net = ImaginationNet(env = env,
-                                     config = args,
-                                     num_goals = args.Imagination_General.num_goals,
-                                     agent = agent,
-                                     vae = model).to(device)
-        
-    imagination_net.load("models/imagination_net/imagination_net_epoch_400.tar")
-    imagination_net.eval()
-    
-    transition_captioner = MiniGridTransitionDescriber(5)
         
     # Create data directory if it doesn't exist
     if is_agent:
@@ -105,12 +98,12 @@ def main(args: DictConfig) -> None:
     
     for i in range(1, 10):
         frame_arrays = []
+        partial_view_array = []
         state, info = env.reset()
         frame = env.get_frame()
         frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         frame_arrays.append(frame)
         episode_steps = 0
-        hx = None
         while True:
             env.render()
             p_agent_loc = env.agent_pos
@@ -120,33 +113,18 @@ def main(args: DictConfig) -> None:
                     action = agent.get_action(np.transpose(state['image']/255, (2,0,1)))
             else:
                 with torch.no_grad():
-                    p_state = state['image']
-                    p_state = cv2.cvtColor(p_state, cv2.COLOR_BGR2RGB)
-                    cv2.imwrite("p_state.png", p_state)
-                    imagined_state = imagination_net(torch.tensor(np.transpose(state['image']/255, (2,0,1))).float().to(device))
-                    p_state_imagination_0 = cv2.cvtColor(np.transpose(imagined_state[0,0,...].detach().cpu().numpy(), (2,1,0))*255, cv2.COLOR_BGR2RGB)
-                    p_state_imagination_1 = cv2.cvtColor(np.transpose(imagined_state[0,1,...].detach().cpu().numpy(), (2,1,0))*255, cv2.COLOR_BGR2RGB)
-                    cv2.imwrite("p_state_img0.png", p_state_imagination_0)
-                    cv2.imwrite("p_state_img1.png", p_state_imagination_1)
-                    action = agent.get_action(imagined_state[0,0,:])
-                    # original_state_prob = calculate_probabilities(env.agent_pos,env.get_unprocesed_obs()['image'],env.get_unprocesed_obs()['direction'], env.purple_key_loc, 
-                    #                       env.green_ball_loc)
-                    _, _, _, _, vae_original_prob = model(torch.tensor(np.transpose(state['image']/255, (2,0,1))).to(device).float())
-                    _, _, _, _, vae_1 = model(imagined_state[0,1,...])
-                    _, _, _, _, vae_0 = model(imagined_state[0,0,...])
+                    x = np.transpose(state['image']/255, (2,0,1))
+                    x = torch.tensor(x).to(device).float()
+                    imagined_state = model.generate(x, torch.tensor([0, 1, 0]).to(device).float())
+                    action = agent.get_action(imagined_state.squeeze())
+
+                    # Concatenate tensors side by side (along the width)
+                    concatenated_image = torch.cat((x, imagined_state.squeeze()), dim=2)  # Shape: (3, 40, 80)
+                    # Convert PyTorch tensor to NumPy array for OpenCV (HWC format)
+                    partial_frame = (concatenated_image.permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)  # (40, 80, 3)
+                    partial_view_array.append(cv2.cvtColor(partial_frame, cv2.COLOR_BGR2RGB))
+
             next_state, reward, terminated, truncated, _ = env.step(action)
-            # c_agent_loc = env.agent_pos
-            # c_state = env.get_unprocesed_obs()
-            # transition_caption = transition_captioner.generate_description(agent_prev_pos = p_agent_loc, 
-            #                                                                agent_curr_pos = c_agent_loc, 
-            #                                                                agent_prev_dir = p_state['direction'], 
-            #                                                                agent_curr_dir = c_state['direction'], 
-            #                                                                prev_view = p_state['image'],
-            #                                                                curr_view = c_state['image'],
-            #                                                                purple_key_pos = env.purple_key_loc, 
-            #                                                                green_ball_pos = env.green_ball_loc,
-            #                                                                agent_action = action)
-            
             frame = env.get_frame()
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             frame_arrays.append(frame)
@@ -155,6 +133,7 @@ def main(args: DictConfig) -> None:
             episode_steps += 1
             if done:
                 break
-        write_video(frame_arrays, str(i), video_dir)    
+        write_video(frame_arrays, f'{str(i)}_full_view', f'{video_dir}/Full_view')
+        write_video(partial_view_array, f'{str(i)}_partial_view', f'{video_dir}/Partial_view', (80,40))    
 if __name__ == "__main__":
     main()

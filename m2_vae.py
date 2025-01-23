@@ -77,12 +77,13 @@ def main(args: DictConfig) -> None:
                                  args.M2_Network.recon_loss_weight).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
     # Initialize the network and optimizer
-    mine_network = MineNetwork(input_size=args.M2_Network.latent_dim + args.M2_General.y_dim, hidden_size=[128,32])
-    optimizer = torch.optim.Adam(mine_network.parameters(), lr=args.M2_Network.lr_model)
+    mine_network = MineNetwork(input_size=args.M2_Network.latent_dim + args.M2_General.y_dim, hidden_size=[128,32]).to(device)
+    mine_optimizer = torch.optim.Adam(mine_network.parameters(), lr=args.M2_Network.lr_model)
     
     scheduler_model = CosineAnnealingLR(optimizer, T_max=args.M2_Network.epochs)
     
     wandb.watch(model)
+    wandb.watch(mine_network)
     wandb.config.update(OmegaConf.to_container(args, resolve=True))
     epoch_bar = tqdm(range(args.M2_Network.epochs), desc="Training Progress", unit="epoch")
     for epoch in epoch_bar:
@@ -102,10 +103,25 @@ def main(args: DictConfig) -> None:
             # L = model.L(x, y, labelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
             
             u_reconstructed, u_z, u_z_mu, u_z_log_var, u_c_logits, u_c = model(u)
-            total_loss_U, recon_loss, kl_z, kl_c, mi_loss, w_loss = model.U(u, u_reconstructed, u_z_mu, u_z_log_var, u_c_logits, u_c, wessestein_weight, kl_weight=kl_divergence_weight)
+            total_loss_U, recon_loss, kl_z, kl_c, w_loss = model.U(u, u_reconstructed, u_z_mu, u_z_log_var, u_c_logits, u_c, wessestein_weight, kl_weight=kl_divergence_weight)
             # reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
+
+            # Freeze MINE network parameters
+            for param in mine_network.parameters():
+                param.requires_grad = False
             
-            
+            #Training Mine
+            # z_sample, c_sample = x_z, y
+            # # Compute T(x,y) for joint sample
+            # T_joint = mine_network(z_sample, c_sample)
+            # # Compute T(x,y) for marginal samples
+            # # Shuffle one of the variables to simulate the product of marginals
+            # c_shuffle = c_sample[torch.randperm(x_z.shape[0])]
+            # T_marginal = mine_network(z_sample, c_shuffle)
+            # # Compute the loss
+            # mi_estimate = mine_network.mine_estimate(T_joint, T_marginal)
+
+
             # for i in range(3):  # Train discriminator k times
             # === Train Discriminator ===
             # x_d_loss = model.discriminator.discriminator_loss(x, x_reconstructed)
@@ -141,13 +157,35 @@ def main(args: DictConfig) -> None:
             
             # #Linearly descrese the alpha
             # alpha = anneal_coefficient(epoch, args.M2_Network.epochs, 500, 50, 200, False)
-            J_alpha = total_loss_L + total_loss_U 
+            J_alpha = total_loss_L + total_loss_U #+ 0.1*(mi_estimate ** 2)
             optimizer.zero_grad()
             J_alpha.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
-            
             scheduler_model.step(J_alpha)
+
+            # Unfreeze MINE network parameters for later use
+            for param in mine_network.parameters():
+                param.requires_grad = True
+
+            # # MI estimate for MINE loss
+            # for i in range(10):
+            #     z_sample = x_z.detach()
+            #     c_sample = y.detach()
+            #     T_joint = mine_network(z_sample, c_sample)
+            #     # Compute T(x,y) for marginal samples
+            #     # Shuffle one of the variables to simulate the product of marginals
+            #     c_shuffle = c_sample[torch.randperm(x_z.shape[0])]
+            #     T_marginal = mine_network(z_sample, c_shuffle)
+            #     # Compute the loss
+            #     mi_estimate = mine_network.mine_estimate(T_joint, T_marginal)
+            #     mi_estimate = torch.mean(T_joint) - torch.log(torch.mean(torch.exp(T_marginal)) + 1e-6)
+            #     mine_loss_value = -mi_estimate  # Negative to maximize MI estimate
+            
+            #     mine_optimizer.zero_grad()
+            #     mine_loss_value.backward()
+            #     torch.nn.utils.clip_grad_norm_(mine_network.parameters(), max_norm=1.0)
+            #     mine_optimizer.step()
             
             total_loss += J_alpha.item()
             classification_losses += cls_loss.item()
@@ -156,7 +194,7 @@ def main(args: DictConfig) -> None:
             u_kl_losses+= kl_c.item()
             L_losses += total_loss_L.item()
             U_losses += total_loss_U.item()
-            mi_losses += mi_loss.item()
+            # mi_losses += mi_estimate.item()
             wessestein_losses += w_loss.item()
             
             # # Mask to identify rows where the target is not [0.5, 0.5]
@@ -182,7 +220,7 @@ def main(args: DictConfig) -> None:
                    "L loss" : L_losses/len(unlabelled_data_loader),
                    "U loss" : U_losses/len(unlabelled_data_loader),
                    "Wessestein loss" : wessestein_losses/len(unlabelled_data_loader),
-                   "Mutual info loss" : mi_losses/len(unlabelled_data_loader),
+                #    "Mutual info" : mi_losses/len(unlabelled_data_loader),
                    "Accuracy" : accuracy_labeled/len(unlabelled_data_loader),
                    "Unlabelled Accuracy" : accuracy_unlabeled/len(unlabelled_data_loader),
                    "Current Learning rate" : optimizer.param_groups[0]['lr'],

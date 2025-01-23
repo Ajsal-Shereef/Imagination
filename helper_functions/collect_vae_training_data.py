@@ -87,7 +87,7 @@ def parse_arguments():
     parser.add_argument(
         '--episodes',
         type=int,
-        default=3000,
+        default=6000,
         help='Number of episodes to run for data collection (default: 100)'
     )
     parser.add_argument(
@@ -285,7 +285,7 @@ def collect_data(env, use_random, episodes, max_steps, device, arg, q_network_pa
             # comparison[1::2] = generated
             # save_image(comparison.data, 'test.png', nrow=1, pad_value=0.3)
             
-            c_frame = env.get_frame()
+            # c_frame = env.get_frame()
             # c_frame = cv2.cvtColor(c_frame, cv2.COLOR_BGR2RGB)
             # cv2.imwrite("frame.png", c_frame)
             

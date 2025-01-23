@@ -566,10 +566,10 @@ class SimplePickup(MiniGridEnv):
         # self.purple_key_loc = (2,4)
         
         # Place one green ball at a random position
-        self.green_ball_loc = self.place_obj(Ball('green', can_overlap=False), max_tries=100)
+        self.green_ball_loc = self.place_obj(Ball('green', can_overlap=True), max_tries=100)
 
         # Place one purple key at a random position
-        self.purple_key_loc = self.place_obj(Key('purple', can_overlap=False), max_tries=100)
+        self.purple_key_loc = self.place_obj(Key('purple', can_overlap=True), max_tries=100)
 
         # Place the agent
         if self.agent_start_pos is not None:
@@ -699,7 +699,7 @@ class SimplePickup(MiniGridEnv):
         # Check if the agent has picked up the goal object (e.g., the ball)
         if isinstance(self.carrying, Ball) and self.carrying.color == 'green':
             reward = self._reward()
-            terminated = True
-        elif isinstance(self.carrying, Key) and self.carrying.color == 'purple':
-            terminated = True
+        #     terminated = True
+        # elif isinstance(self.carrying, Key) and self.carrying.color == 'purple':
+        #     terminated = True
         return self.obs, reward, terminated, truncated, info
