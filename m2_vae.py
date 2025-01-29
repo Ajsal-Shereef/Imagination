@@ -52,7 +52,7 @@ def main(args: DictConfig) -> None:
     # Initialize dataset and dataloader
     #Loading the dataset
     datasets = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/data.pkl')
-    datasets = [i/255 for i in datasets]
+    # datasets = [i/255 for i in datasets]
     # captions = get_data(f'{args.P_VAE_General.datapath}/{args.P_VAE_General.env}/captions.pkl')
     class_probs = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/class_prob.pkl')
     
@@ -68,22 +68,23 @@ def main(args: DictConfig) -> None:
     
     unlabelled_data = TwoListDataset(unlabelled_data, unused_labels)
     labelled_data = TwoListDataset(labelled_data, labels)
-    unlabelled_data_loader = DataLoader(unlabelled_data, batch_size=900, shuffle=True)
-    labelled_data_loader = DataLoader(labelled_data, batch_size=900, shuffle=True)
+    unlabelled_data_loader = DataLoader(unlabelled_data, batch_size=1000, shuffle=True)
+    labelled_data_loader = DataLoader(labelled_data, batch_size=1000, shuffle=True)
     #Creating the model and the optimizer
     model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
-                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, \
+                                 args.M2_Network.feature_encoder_hidden], \
                                  args.M2_Network.label_loss_weight,
                                  args.M2_Network.recon_loss_weight).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=args.M2_Network.lr_model, betas=(0.9, 0.999))
     # Initialize the network and optimizer
-    mine_network = MineNetwork(input_size=args.M2_Network.latent_dim + args.M2_General.y_dim, hidden_size=[128,32]).to(device)
-    mine_optimizer = torch.optim.Adam(mine_network.parameters(), lr=args.M2_Network.lr_model)
+    # mine_network = MineNetwork(input_size=args.M2_Network.latent_dim + args.M2_General.y_dim, hidden_size=[128,32]).to(device)
+    # mine_optimizer = torch.optim.Adam(mine_network.parameters(), lr=args.M2_Network.lr_model)
     
     scheduler_model = CosineAnnealingLR(optimizer, T_max=args.M2_Network.epochs)
     
     wandb.watch(model)
-    wandb.watch(mine_network)
+    # wandb.watch(mine_network)
     wandb.config.update(OmegaConf.to_container(args, resolve=True))
     epoch_bar = tqdm(range(args.M2_Network.epochs), desc="Training Progress", unit="epoch")
     for epoch in epoch_bar:
@@ -107,8 +108,8 @@ def main(args: DictConfig) -> None:
             # reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
 
             # Freeze MINE network parameters
-            for param in mine_network.parameters():
-                param.requires_grad = False
+            # for param in mine_network.parameters():
+            #     param.requires_grad = False
             
             #Training Mine
             # z_sample, c_sample = x_z, y
@@ -165,8 +166,8 @@ def main(args: DictConfig) -> None:
             scheduler_model.step(J_alpha)
 
             # Unfreeze MINE network parameters for later use
-            for param in mine_network.parameters():
-                param.requires_grad = True
+            # for param in mine_network.parameters():
+            #     param.requires_grad = True
 
             # # MI estimate for MINE loss
             # for i in range(10):

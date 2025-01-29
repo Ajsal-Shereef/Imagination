@@ -4,7 +4,7 @@ from torch.distributions import Categorical
 import numpy as np
 import torch.nn.functional as F
 from architectures.cnn import CNNLayer, CNN
-from architectures.mlp import Linear
+from architectures.mlp import Linear, MLP
 
 def hidden_init(layer):
     fan_in = layer.weight.data.size()[0]
@@ -26,21 +26,22 @@ class Actor(nn.Module):
         """
         super(Actor, self).__init__()
         
-        conv1 = CNNLayer(input_dim, 32, 8, 2)
-        conv2 = CNNLayer(32, 64, 8, 2)
-        conv3 = CNNLayer(64, 64, 3)
-        conv_feature = Linear(576, 32)
-        self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
-        self.fc1 = nn.Linear(32, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, action_size)
+        # conv1 = CNNLayer(input_dim, 32, 8, 2)
+        # conv2 = CNNLayer(32, 64, 8, 2)
+        # conv3 = CNNLayer(64, 64, 3)
+        # conv_feature = Linear(576, 32)
+        # self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
+        # self.fc1 = nn.Linear(32, hidden_size)
+        # self.fc2 = nn.Linear(hidden_size, hidden_size)
+        # self.fc3 = nn.Linear(hidden_size, action_size)
+        self.net = MLP(input_dim, action_size, [128 ,64])
         self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, state):
-        feature = self.feature_encoder(state)
-        x = F.relu(self.fc1(feature[0]))
-        x = F.relu(self.fc2(x))
-        action_probs = self.softmax(self.fc3(x))
+        # feature = self.feature_encoder(state)
+        # x = F.relu(self.fc1(feature[0]))
+        # x = F.relu(self.fc2(x))
+        action_probs = self.softmax(self.net(state))
         return action_probs
     
     def evaluate(self, state, epsilon=1e-6):
@@ -71,7 +72,7 @@ class Actor(nn.Module):
     
     def get_det_action(self, state):
         self.eval()
-        action_probs = self.forward(state)
+        action_probs = self.forward(state.unsqueeze(0))
         dist = Categorical(action_probs)
         action = dist.sample().to(state.device)
         self.train()
@@ -91,24 +92,26 @@ class Critic(nn.Module):
             hidden_size (int): Number of nodes in the network layers
         """
         super(Critic, self).__init__()
-        conv1 = CNNLayer(input_dim, 32, 8, 2)
-        conv2 = CNNLayer(32, 64, 8, 2)
-        conv3 = CNNLayer(64, 64, 3)
-        conv_feature = Linear(576, 32)
-        self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
-        self.fc1 = nn.Linear(32, hidden_size)
-        self.fc2 = nn.Linear(hidden_size, hidden_size)
-        self.fc3 = nn.Linear(hidden_size, action_size)
-        self.reset_parameters()
+        # conv1 = CNNLayer(input_dim, 32, 8, 2)
+        # conv2 = CNNLayer(32, 64, 8, 2)
+        # conv3 = CNNLayer(64, 64, 3)
+        # conv_feature = Linear(576, 32)
+        # self.feature_encoder = CNN([conv1, conv2, conv3], conv_feature)
+        # self.fc1 = nn.Linear(32, hidden_size)
+        # self.fc2 = nn.Linear(hidden_size, hidden_size)
+        # self.fc3 = nn.Linear(hidden_size, action_size)
+        self.net = MLP(input_dim, action_size, [128 ,64])
+        # self.reset_parameters()
 
     def reset_parameters(self):
         self.fc1.weight.data.uniform_(*hidden_init(self.fc1))
         self.fc2.weight.data.uniform_(*hidden_init(self.fc2))
         self.fc3.weight.data.uniform_(-3e-3, 3e-3)
+        # self.net.weight.data.uniform_(-3e-3, 3e-3)
 
     def forward(self, state):
         """Build a critic (value) network that maps (state, action) pairs -> Q-values."""
-        feature = self.feature_encoder(state)
-        x = F.relu(self.fc1(feature[0]))
-        x = F.relu(self.fc2(x))
-        return self.fc3(x)
+        # feature = self.feature_encoder(state)
+        # x = F.relu(self.fc1(feature[0]))
+        # x = F.relu(self.fc2(x))
+        return self.net(state)

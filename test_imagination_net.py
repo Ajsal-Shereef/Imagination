@@ -18,15 +18,15 @@ from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 from architectures.m2_vae.dgm import DeepGenerativeModel
 
-is_agent = False
+is_agent = True
 
 @hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
     if args.General.env ==  "SimplePickup":
-        from env.env import SimplePickup
-        env = SimplePickup(max_steps=args.General.max_ep_len, agent_view_size=5, size=7, render_mode="rgb_array")
-        from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
-        env = RGBImgPartialObsWrapper(env)
+        from env.env import MultiObjectMiniGridEnv
+        env = MultiObjectMiniGridEnv(max_steps=args.General.max_ep_len, agent_view_size=5, size=7, render_mode="rgb_array")
+        # from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
+        # env = RGBImgPartialObsWrapper(env)
         
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     print(f"Using device: {device}")
@@ -68,7 +68,7 @@ def main(args: DictConfig) -> None:
                         args.policy_network_cfg, '')
     else:
         agent = SAC(args,
-                    input_dim = env.observation_space['image'].shape[-1],
+                    input_dim = env.observation_space.shape[-1],
                     action_size = env.action_space.n,
                     device=device,
                     buffer_size = args.Imagination_General.buffer_size)
@@ -80,7 +80,8 @@ def main(args: DictConfig) -> None:
         params.requires_grad = False
         
     model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
-                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, \
+                                 args.M2_Network.feature_encoder_hidden], \
                                  args.M2_Network.label_loss_weight,
                                  args.M2_Network.recon_loss_weight).to(device)
     model.load(args.Imagination_General.vae_checkpoint)
@@ -110,19 +111,22 @@ def main(args: DictConfig) -> None:
             # p_state = env.get_unprocesed_obs()
             if is_agent:
                 with torch.no_grad():
-                    action = agent.get_action(np.transpose(state['image']/255, (2,0,1)))
+                    action = agent.get_action(state)
             else:
                 with torch.no_grad():
-                    x = np.transpose(state['image']/255, (2,0,1))
-                    x = torch.tensor(x).to(device).float()
-                    imagined_state = model.generate(x, torch.tensor([0, 1, 0]).to(device).float())
+                    x = torch.tensor(state).to(device).float()
+                    imagined_state = model.generate(x.unsqueeze(0), torch.tensor([0, 1, 0]).to(device).float())
                     action = agent.get_action(imagined_state.squeeze())
-
+                    imagined_state = np.round(imagined_state.squeeze().detach().cpu().numpy())
+                    r_obs_gen = imagined_state[:-10].reshape((5,5,3))
+                    partial_view_gen = env.render_partial_view_from_features(r_obs_gen, np.argmax(imagined_state[-10:-6]), tile_size=32)
+                    r_obs = state[:-10].reshape((5,5,3))
+                    partial_view = env.render_partial_view_from_features(r_obs, np.argmax(state[-10:-6]), tile_size=32)
                     # Concatenate tensors side by side (along the width)
-                    concatenated_image = torch.cat((x, imagined_state.squeeze()), dim=2)  # Shape: (3, 40, 80)
+                    concatenated_image = np.concatenate((partial_view_gen, partial_view), axis=1)  # Shape: (3, 40, 80)
                     # Convert PyTorch tensor to NumPy array for OpenCV (HWC format)
-                    partial_frame = (concatenated_image.permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)  # (40, 80, 3)
-                    partial_view_array.append(cv2.cvtColor(partial_frame, cv2.COLOR_BGR2RGB))
+                    # partial_frame = (concatenated_image.permute(1, 2, 0).detach().cpu().numpy() * 255).astype(np.uint8)  # (40, 80, 3)
+                    partial_view_array.append(cv2.cvtColor(concatenated_image, cv2.COLOR_BGR2RGB))
 
             next_state, reward, terminated, truncated, _ = env.step(action)
             frame = env.get_frame()
@@ -134,6 +138,6 @@ def main(args: DictConfig) -> None:
             if done:
                 break
         write_video(frame_arrays, f'{str(i)}_full_view', f'{video_dir}/Full_view')
-        write_video(partial_view_array, f'{str(i)}_partial_view', f'{video_dir}/Partial_view', (80,40))    
+        write_video(partial_view_array, f'{str(i)}_partial_view', f'{video_dir}/Partial_view', (320,160))    
 if __name__ == "__main__":
     main()

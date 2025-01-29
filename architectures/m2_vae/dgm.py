@@ -118,13 +118,13 @@ class DeepGenerativeModel(nn.Module):
         Initialise a new generative model
         :param dims: dimensions of x, y, z and hidden layers.
         """
-        [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden, feature_encoder_channel_dim] = dims
+        [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden, encoder_hidden_layers] = dims
         self.label_weight = label_weight
         self.recon_weight = recon_weight
         super(DeepGenerativeModel, self).__init__()
-        self.encoder = FeatureEncoder([self.x_dim, self.h_dim, feature_encoder_channel_dim])
+        self.encoder = FeatureEncoder([self.x_dim, self.h_dim, encoder_hidden_layers])
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
-        self.decoder = Decoder([self.z_dim, self.y_dim, self.h_dim, self.x_dim])
+        self.decoder = Decoder([self.z_dim, self.y_dim, self.x_dim])
         # self.classifier = GaussianSample(self.h_dim, self.z_dim)
         self.classifier = MLP(self.h_dim, self.y_dim, [64])
         # self.z_projection = Linear(self.z_dim, 32)
@@ -145,8 +145,8 @@ class DeepGenerativeModel(nn.Module):
     def forward(self, x):
         # Add label and data and generate latent variable
         h = self.encoder(x)
-        z_latent, z_mu, z_log_var = self.z_latent(h[0])
-        c_logits = self.classify(h[0]) 
+        z_latent, z_mu, z_log_var = self.z_latent(h)
+        c_logits = self.classify(h) 
         c = sample_gumbel_softmax(c_logits, self.training)
         # Reconstruct data point from latent data and label
         # if y is not None:
@@ -177,7 +177,7 @@ class DeepGenerativeModel(nn.Module):
             x_generated: Generated images (B, 3, 40, 40)
         """
         h = self.encoder(x_input)
-        z, mu, logvar = self.z_latent(h[0])
+        z, mu, logvar = self.z_latent(h)
         if use_mean_z:
             z = mu  # Use mean of q(z|x)
         x_generated = self.decoder(z, c_cond)
@@ -260,7 +260,7 @@ class DeepGenerativeModel(nn.Module):
     def L(self, x, x_recon, mu_z, logvar_z, y, logits_c, x_c, ws_weight, kl_weight):
         #Reconstruction loss
         recon_loss = F.mse_loss(x_recon, x, reduction='none')
-        recon_loss = torch.mean(recon_loss.sum(dim=[1, 2, 3]))
+        recon_loss = torch.mean(recon_loss.sum(dim=-1))
         # KL divergence for z
         kl_z = self.kl_divergence_z(mu_z, logvar_z)
         # KL divergence for c
@@ -296,7 +296,7 @@ class DeepGenerativeModel(nn.Module):
     def U(self, x, x_recon, mu_z, logvar_z, logits_c, x_c, ws_weight, kl_weight):
         #Reconstruction loss
         recon_loss = F.mse_loss(x_recon, x, reduction='none')
-        recon_loss = torch.mean(recon_loss.sum(dim=[1, 2, 3]))
+        recon_loss = torch.mean(recon_loss.sum(dim=-1))
         # KL divergence for z
         kl_z = self.kl_divergence_z(mu_z, logvar_z)
         # KL divergence for c

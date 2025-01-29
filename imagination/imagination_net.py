@@ -34,7 +34,7 @@ class ImaginationNet(nn.Module):
         super(ImaginationNet, self).__init__()
         self.env = env
         self.config = config
-        self.input_dim = env.observation_space['image'].shape[-1]
+        self.input_dim = env.observation_space.shape[-1]
         self.vae = vae
         hidden_layers = config.Imagination_Network.hidden_layers
         conv1 = CNNLayer(self.input_dim, 32, 5, 2)

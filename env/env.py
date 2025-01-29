@@ -3,7 +3,7 @@ from gymnasium import spaces
 from minigrid.core.constants import COLOR_NAMES, OBJECT_TO_IDX, COLOR_TO_IDX, STATE_TO_IDX, DIR_TO_VEC, IDX_TO_OBJECT, IDX_TO_COLOR
 from minigrid.core.grid import Grid
 from minigrid.core.mission import MissionSpace
-from minigrid.core.world_object import Door, Goal, Key, Wall, Ball
+from minigrid.core.world_object import WorldObj, Door, Goal, Key, Wall, Ball
 from minigrid.minigrid_env import MiniGridEnv
 
 # Define the possible directions the agent can face (4 possible directions: 0-3)
@@ -128,10 +128,10 @@ def calculate_probabilities(agent_position, observation, agent_direction, purple
     # exp_scores = np.exp([score_purple, score_green])
     # probabilities = exp_scores / np.sum(exp_scores)
     
-    if np.array_equal(agent_position, purple_key_position):
-        print("Overlap with purple key")
-    if np.array_equal(agent_position, green_ball_position):
-        print("Overlap with Green ball")
+    # if np.array_equal(agent_position, purple_key_position):
+    #     print("Overlap with purple key")
+    # if np.array_equal(agent_position, green_ball_position):
+    #     print("Overlap with Green ball")
     
     if 'purple key' in object and 'green ball' in object:
         probabilities = np.array([0,0,1])
@@ -202,8 +202,9 @@ def calculate_probabilities(agent_position, observation, agent_direction, purple
 def preprocess_observation(obs):
     grid_obs = obs['image']  # Shape: (grid_height, grid_width, 3)
     agent_direction = obs['direction']  # Scalar value for direction (0 to 3)
+    inventory = obs['inventory']
     direction_one_hot = get_one_hot_encoding(agent_direction, NUM_DIRECTIONS)
-    return np.concatenate([grid_obs.flatten(), direction_one_hot])
+    return np.concatenate([grid_obs.flatten(), direction_one_hot, inventory.flatten()])
 
 def one_hot_to_index(one_hot_vec):
     """Helper function to convert a one-hot encoded vector back to the index."""
@@ -517,6 +518,348 @@ class DoorKeyPickup(MiniGridEnv):
         
         return obs, reward, terminated, truncated, info
     
+class MultiObjectMiniGridEnv(MiniGridEnv):
+    """
+    Custom environment where the agent can carry multiple objects.
+    """
+
+    def __init__(
+        self,
+        max_steps,
+        size=7,
+        render_mode = None,
+        agent_start_pos=None,
+        agent_start_dir=None,
+        verbose=True,
+        **kwargs,
+    ):
+        self.agent_start_pos = agent_start_pos
+        self.agent_start_dir = agent_start_dir
+
+        mission_space = MissionSpace(mission_func=self._gen_mission)
+
+        if max_steps is None:
+            max_steps = 4 * size**2
+
+        self.verbose = verbose
+
+        super().__init__(
+            mission_space=mission_space,
+            grid_size=size,
+            # Set this to True for maximum speed
+            see_through_walls=True,
+            max_steps=max_steps,
+            render_mode = render_mode,
+            **kwargs,
+        )
+
+        # Initialize the agent's inventory as an empty list
+        self.inventory = []
+
+        # Define the maximum inventory size
+        self.inventory_size = 2
+
+        # Update the observation space to include the inventory
+        # It's a Box space with shape (inventory_size, 3): [type, color, state]
+        # self.observation_space = spaces.Dict({
+        #     'image': self.observation_space['image'],
+        #     'direction': self.observation_space['direction'],
+        #     'mission': self.observation_space['mission'],
+        #     'inventory': spaces.Box(
+        #         low=0,
+        #         high=255,
+        #         shape=(self.inventory_size, 3),  # 3 channels: type, color, state
+        #         dtype='uint8'
+        #     )
+        # })
+        self.observation_space = spaces.Box(low=0, high=10, shape=(85,), dtype=np.float32)
+
+    def reset(self):
+        self.inventory = []
+        obs, info = super().reset()
+        self.carrying = []
+        obs = preprocess_observation(obs)
+        return obs, info
+    
+    def _gen_grid(self, width, height):
+        # Create an empty grid
+        self.grid = Grid(width, height)
+
+        # Generate the surrounding walls
+        self.grid.wall_rect(0, 0, width, height)
+        
+        # # # # Place a ball square in the bottom-right corner
+        # self.grid.set(4, 2, Ball(color='green'))
+        # self.green_ball_loc = (4,2)
+        
+        # # # # Place a ball square in the bottom-right corner
+        # self.grid.set(2, 4, Ball(color='red'))
+        # self.purple_key_loc = (2,4)
+        
+        # Place one green ball at a random position
+        self.green_ball_loc = self.place_obj(Ball('green', can_overlap=True), max_tries=100)
+
+        # Place one purple key at a random position
+        self.purple_key_loc = self.place_obj(Key('purple', can_overlap=True), max_tries=100)
+
+        # Place the agent
+        if self.agent_start_pos is not None:
+            self.agent_pos = self.agent_start_pos
+            self.agent_dir = self.agent_start_dir
+        else:
+            self.place_agent()
+
+        self.mission = "Pick the green ball"
+
+    def gen_obs_grid(self, agent_view_size=None):
+        """
+        Generate the sub-grid observed by the agent.
+        This method also outputs a visibility mask telling us which grid
+        cells the agent can actually see.
+        if agent_view_size is None, self.agent_view_size is used
+        """
+
+        topX, topY, botX, botY = self.get_view_exts(agent_view_size)
+
+        agent_view_size = agent_view_size or self.agent_view_size
+
+        grid = self.grid.slice(topX, topY, agent_view_size, agent_view_size)
+
+        for i in range(self.agent_dir + 1):
+            grid = grid.rotate_left()
+
+        # Process occluders and visibility
+        # Note that this incurs some performance cost
+        if not self.see_through_walls:
+            vis_mask = grid.process_vis(
+                agent_pos=(agent_view_size // 2, agent_view_size - 1)
+            )
+        else:
+            vis_mask = np.ones(shape=(grid.width, grid.height), dtype=bool)
+
+        # Make it so the agent sees what it's carrying
+        # We do this by placing the carried object at the agent's position
+        # in the agent's partially observable view
+
+        return grid, vis_mask
+
+    def gen_obs(self):
+        """
+        Generate the agent's view including the inventory.
+        """
+        grid, vis_mask = self.gen_obs_grid()
+
+        # Encode the partially observable view into a numpy array
+        image = grid.encode(vis_mask)
+        obs = {"image": image, "direction": self.agent_dir, "mission": self.mission}
+
+        # Represent the inventory as an array of object observations
+        inventory_obs = np.zeros((self.inventory_size, 3), dtype='uint8')
+
+        for idx, item in enumerate(self.inventory):
+            if item is not None:
+                # Encode the object as an integer array [type, color, state]
+                inventory_obs[idx] = np.array(
+                    [OBJECT_TO_IDX[item.type], COLOR_TO_IDX[item.color], 0], dtype='uint8'
+                )
+
+        obs['inventory'] = inventory_obs
+
+        return obs
+
+    def step(self, action):
+        self.step_count += 1
+        reward = 0
+        terminated = False
+        truncated = False
+        # Get the position in front of the agent
+        fwd_pos = self.front_pos
+
+        # Get the contents of the cell in front of the agent
+        fwd_cell = self.grid.get(*fwd_pos)
+
+        # Rotate left
+        if action == self.actions.left:
+            self.agent_dir -= 1
+            if self.agent_dir < 0:
+                self.agent_dir += 4
+
+        # Rotate right
+        elif action == self.actions.right:
+            self.agent_dir = (self.agent_dir + 1) % 4
+
+        # Move forward
+        elif action == self.actions.forward:
+            if fwd_cell is None or fwd_cell.can_overlap():
+                self.agent_pos = tuple(fwd_pos)
+            if fwd_cell is not None and fwd_cell.type == "goal":
+                terminated = True
+                reward = self._reward()
+            if fwd_cell is not None and fwd_cell.type == "lava":
+                terminated = True
+
+        # Handle the pickup action
+        elif action == self.actions.pickup:
+            if fwd_cell and fwd_cell.can_pickup():
+                if len(self.inventory) < self.inventory_size:  # Maximum inventory size
+                    # Add the object to the inventory
+                    self.inventory.append(fwd_cell)
+                    self.carrying.append(fwd_cell)
+                    self.carrying[-1].cur_pos = np.array([-1, -1])
+                    self.grid.set(fwd_pos[0], fwd_pos[1], None)
+                    if isinstance(fwd_cell, Ball) and fwd_cell.color == 'green':
+                        reward = self._reward()
+
+        # Drop an object
+        elif action == self.actions.drop:
+            # if not fwd_cell and self.carrying:
+            #     if self.inventory:
+            #         # Remove the last item from the inventory
+            #         item = self.inventory.pop(0)
+            #     self.grid.set(fwd_pos[0], fwd_pos[1], self.carrying[0])
+            #     self.carrying[0].cur_pos = fwd_pos
+            #     self.carrying.pop(0)
+            pass
+
+        # Toggle/activate an object
+        elif action == self.actions.toggle:
+            if fwd_cell:
+                fwd_cell.toggle(self, fwd_pos)
+
+        # Done action (not used by default)
+        elif action == self.actions.done:
+            pass
+
+        else:
+            raise ValueError(f"Unknown action: {action}")
+
+        if self.step_count >= self.max_steps:
+            truncated = True
+
+        if self.render_mode == "human":
+            self.render()
+
+        obs = self.gen_obs()
+        self.obs = obs
+        obs = preprocess_observation(obs)
+
+        if len(self.inventory)>1:
+            terminated = True
+
+        return obs, reward, terminated, truncated, {}
+
+    def get_unprocesed_obs(self):
+        return self.obs
+
+    def _pickup(self):
+        """
+        Handle the pickup action for multiple objects.
+        """
+        fwd_pos = self.front_pos
+        fwd_cell = self.grid.get(*fwd_pos)
+
+        if fwd_cell and fwd_cell.can_pickup():
+            if len(self.inventory) < self.inventory_size:  # Maximum inventory size
+                # Add the object to the inventory
+                self.inventory.append(fwd_cell)
+                # Remove the object from the grid
+                self.grid.set(*fwd_pos, None)
+                if self.verbose:
+                    print(f"Picked up {fwd_cell.type}-{fwd_cell.color}")
+            else:
+                if self.verbose:
+                    print("Inventory full!")
+        else:
+            if self.verbose:
+                pass
+                # print("No object to pick up!")
+
+    def _drop(self):
+        """
+        Handle the drop action for multiple objects.
+        Dropping the last item in the inventory.
+        """
+        fwd_pos = self.front_pos
+        fwd_cell = self.grid.get(*fwd_pos)
+
+        if fwd_cell is None or fwd_cell.can_overlap():
+            if self.inventory:
+                # Remove the last item from the inventory
+                item = self.inventory.pop()
+                # Place it on the grid in front of the agent
+                item.cur_pos = fwd_pos
+                self.grid.set(*fwd_pos, item)
+                if self.verbose:
+                    print(f"Dropped {item.type}-{item.color}")
+            else:
+                if self.verbose:
+                    pass
+                    # print("Inventory is empty!")
+        else:
+            if fwd_cell and self.inventory and self.verbose:
+                print("Cannot drop here!")
+    
+    @staticmethod
+    def _gen_mission():
+        return "Pick the green ball"
+    
+    @staticmethod
+    def render_partial_view_from_features(features, agent_dir, tile_size=32):
+        """
+        Render an image-based observation from a feature-based observation,
+        transforming it so the agent is always facing up.
+
+        Args:
+            features: Feature-based observation (view_size x view_size x 3).
+                      Contains [object type, color, state] for each grid cell.
+            agent_dir: Integer representing the agent's direction 
+                       (0: right, 1: down, 2: left, 3: up).
+            tile_size: Size of each tile in the rendered image.
+
+        Returns:
+            Rendered image as an RGB array.
+        """
+        # Validate input
+        if not isinstance(features, np.ndarray) or features.ndim != 3 or features.shape[2] != 3:
+            raise ValueError("Features must be a NumPy array with shape (view_size, view_size, 3).")
+
+        if agent_dir not in [0, 1, 2, 3]:
+            raise ValueError("Invalid agent_dir. Must be 0 (right), 1 (down), 2 (left), or 3 (up).")
+
+        view_size = features.shape[0]
+
+        # Initialize the grid
+        grid = Grid(view_size, view_size)
+
+        # Agent's position remains the same (center of the last row)
+        agent_pos = (view_size // 2, view_size - 1)  # (x, y) format
+
+        # Agent's direction is now up (after transformation)
+        agent_render_dir = 3  # Agent is facing "up"
+
+        # Populate the grid
+        for y in range(view_size):
+            for x in range(view_size):
+                obj_type_idx, color_idx, state_idx = features[x, y]
+                if obj_type_idx > 0:
+                    obj = WorldObj.decode(type_idx=obj_type_idx, color_idx=color_idx, state=state_idx)
+                    if obj:
+                        grid.set(x, y, obj)
+                    else:
+                        grid.set(x, y, None)
+                else:
+                    grid.set(x, y, None)  # Unseen or empty
+
+        # Render the grid with the agent's position and direction
+        img = grid.render(
+            tile_size=tile_size,
+            agent_pos=agent_pos,
+            agent_dir=agent_render_dir
+        )
+
+        return img
+    
+
 class SimplePickup(MiniGridEnv):
     def __init__(
         self,
@@ -544,7 +887,7 @@ class SimplePickup(MiniGridEnv):
             render_mode = render_mode,
             **kwargs,
         )
-        # self.observation_space = spaces.Box(low=0, high=1, shape=(79,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=0, high=1, shape=(79,), dtype=np.float32)
 
     @staticmethod
     def _gen_mission():
@@ -685,16 +1028,71 @@ class SimplePickup(MiniGridEnv):
     
     def get_unprocesed_obs(self):
         return self.obs
-    
 
-    # def reset(self, seed):
-    #     self.obs, info = super().reset(seed)
-    #     # obs = preprocess_observation(self.obs)
-    #     return self.obs, info
+    @staticmethod
+    def render_partial_view_from_features(features, agent_dir, tile_size=32):
+        """
+        Render an image-based observation from a feature-based observation,
+        transforming it so the agent is always facing up.
+
+        Args:
+            features: Feature-based observation (view_size x view_size x 3).
+                      Contains [object type, color, state] for each grid cell.
+            agent_dir: Integer representing the agent's direction 
+                       (0: right, 1: down, 2: left, 3: up).
+            tile_size: Size of each tile in the rendered image.
+
+        Returns:
+            Rendered image as an RGB array.
+        """
+        # Validate input
+        if not isinstance(features, np.ndarray) or features.ndim != 3 or features.shape[2] != 3:
+            raise ValueError("Features must be a NumPy array with shape (view_size, view_size, 3).")
+
+        if agent_dir not in [0, 1, 2, 3]:
+            raise ValueError("Invalid agent_dir. Must be 0 (right), 1 (down), 2 (left), or 3 (up).")
+
+        view_size = features.shape[0]
+
+        # Initialize the grid
+        grid = Grid(view_size, view_size)
+
+        # Agent's position remains the same (center of the last row)
+        agent_pos = (view_size // 2, view_size - 1)  # (x, y) format
+
+        # Agent's direction is now up (after transformation)
+        agent_render_dir = 3  # Agent is facing "up"
+
+        # Populate the grid
+        for y in range(view_size):
+            for x in range(view_size):
+                obj_type_idx, color_idx, state_idx = features[x, y]
+                if obj_type_idx > 0:
+                    obj = WorldObj.decode(type_idx=obj_type_idx, color_idx=color_idx, state=state_idx)
+                    if obj:
+                        grid.set(x, y, obj)
+                    else:
+                        grid.set(x, y, None)
+                else:
+                    grid.set(x, y, None)  # Unseen or empty
+
+        # Render the grid with the agent's position and direction
+        img = grid.render(
+            tile_size=tile_size,
+            agent_pos=agent_pos,
+            agent_dir=agent_render_dir
+        )
+
+        return img
+
+    def reset(self):
+        self.obs, info = super().reset()
+        obs = preprocess_observation(self.obs)
+        return obs, info
         
     def step(self, action):
         self.obs, reward, terminated, truncated, info = super().step(action)
-        # obs = preprocess_observation(self.obs)
+        obs = preprocess_observation(self.obs)
 
         # Check if the agent has picked up the goal object (e.g., the ball)
         if isinstance(self.carrying, Ball) and self.carrying.color == 'green':
@@ -702,4 +1100,4 @@ class SimplePickup(MiniGridEnv):
         #     terminated = True
         # elif isinstance(self.carrying, Key) and self.carrying.color == 'purple':
         #     terminated = True
-        return self.obs, reward, terminated, truncated, info
+        return obs, reward, terminated, truncated, info

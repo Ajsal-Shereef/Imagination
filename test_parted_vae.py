@@ -17,9 +17,9 @@ from helper_functions.collect_vae_training_data import collect_data
 
 
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-model_dir = "models/m2_vae/2025-01-23_11-15-20_CWW4R5/model.pt"
+model_dir = "models/m2_vae/2025-01-27_14-13-57_VSN1UU/model.pt"
 
-def visualize_latent_space(model, imagination_net, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
+def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], method='pca', save_path=''):
     """
     Visualize the latent space using PCA or t-SNE.
 
@@ -236,8 +236,8 @@ def main(args: DictConfig) -> None:
     if args.M2_General.env == "SimplePickup":
         from env.env import SimplePickup #TransitionCaptioner
         env = SimplePickup(max_steps=20, agent_view_size=5, size=7)
-        from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
-        env = RGBImgPartialObsWrapper(env)
+        # from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
+        # env = RGBImgPartialObsWrapper(env)
         
     # datasets, _, class_probs = collect_data(env, True, 2000, 20, device)
     
@@ -259,7 +259,7 @@ def main(args: DictConfig) -> None:
                         args.policy_network_cfg, '')
     else:
         agent = SAC(args,
-                    input_dim = env.observation_space['image'].shape[-1],
+                    input_dim = env.observation_space.shape[-1],
                     action_size = env.action_space.n,
                     device=device,
                     buffer_size = args.Imagination_General.buffer_size)
@@ -268,18 +268,19 @@ def main(args: DictConfig) -> None:
     # agent.load_params(args.Imagination_General.agent_checkpoint)
     
     model = DeepGenerativeModel([args.M2_Network.input_dim, args.M2_General.y_dim, args.M2_Network.h_dim, \
-                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, args.M2_Network.feature_encoder_channel_dim], \
+                                 args.M2_Network.latent_dim, args.M2_Network.classifier_hidden_dim, \
+                                 args.M2_Network.feature_encoder_hidden], \
                                  args.M2_Network.label_loss_weight,
                                  args.M2_Network.recon_loss_weight).to(device)
     model.load(model_dir)
     model.to(device)
     model.eval()
     
-    imagination_net = ImaginationNet(env = env,
-                                     config = args,
-                                     num_goals = args.Imagination_General.num_goals,
-                                     agent = agent,
-                                     vae = model).to(device)
+    # imagination_net = ImaginationNet(env = env,
+    #                                  config = args,
+    #                                  num_goals = args.Imagination_General.num_goals,
+    #                                  agent = agent,
+    #                                  vae = model).to(device)
         
     # imagination_net.load("models/imagination_net/imagination_net_epoch_1000.tar")
     # imagination_net.eval()
@@ -288,7 +289,7 @@ def main(args: DictConfig) -> None:
     data_dir = f'visualizations/m2_vae'
     viz = Visualizer(model, device, root=f'{data_dir}/')
     os.makedirs(data_dir, exist_ok=True)
-    latent, labels = visualize_latent_space(model, imagination_net, train_loader, device, method='pca', save_path=data_dir)
+    latent, labels = visualize_latent_space(model=model, dataloader=train_loader, device=device, method='pca', save_path=data_dir)
     
     # Initialize dataset and dataloader
     dataloader = TwoListDataset(datasets, class_probs)

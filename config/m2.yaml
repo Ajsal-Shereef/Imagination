@@ -5,17 +5,17 @@ M2_General:
   datapath : "data"
   y_dim : 3
 M2_Network:
-  input_dim : 3
+  input_dim : 85
   classifier_hidden_dim : [256,512]
-  feature_encoder_channel_dim : [128, 128, 128, 64]
-  h_dim : 256 
+  feature_encoder_hidden : [256,512]
+  h_dim : 64 
   latent_dim : 16
   decoder_hidden_dim : [512]
-  epochs : 500
+  epochs : 2000
   batch_size : 64
   lr_model : 5e-4
   kl_weight_start : 0.01
   kl_weight_end : 0.05
   save_freequency : 100
   label_loss_weight : 10
-  recon_loss_weight : 1
+  recon_loss_weight : 2

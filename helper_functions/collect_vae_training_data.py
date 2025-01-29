@@ -22,7 +22,7 @@ import numpy as np
 from architectures.m2_vae.dgm import DeepGenerativeModel
 from omegaconf import DictConfig, OmegaConf
 from torchvision.utils import save_image
-from env.env import calculate_probabilities, generate_caption, MiniGridTransitionDescriber
+from env.env import calculate_probabilities, preprocess_observation, reverse_preprocess_observation
 
 model_dir = "models/m2_vae/2025-01-14_13-02-43_TSGVV1/model.pt"
 
@@ -189,7 +189,6 @@ def collect_data(env, use_random, episodes, max_steps, device, arg, q_network_pa
     Returns:
         list: Collected transitions as dictionaries.
     """
-    transition_captioner = MiniGridTransitionDescriber(5)
 
     # vae = DeepGenerativeModel([arg.M2_Network.input_dim, arg.M2_General.y_dim, arg.M2_Network.h_dim, \
     #                              arg.M2_Network.latent_dim, arg.M2_Network.classifier_hidden_dim, arg.M2_Network.feature_encoder_channel_dim], \
@@ -249,7 +248,7 @@ def collect_data(env, use_random, episodes, max_steps, device, arg, q_network_pa
         #                                env.agent_dir, 
         #                                env.purple_key_loc, 
         #                                env.green_ball_loc)
-        state = np.transpose(state['image'], (2, 0, 1))
+        # state = env.get_unprocesed_obs()
         # data.append(state)
         # class_prob.append(prob)
         
@@ -271,11 +270,16 @@ def collect_data(env, use_random, episodes, max_steps, device, arg, q_network_pa
             # p_state = env.get_unprocesed_obs()
             # obj, caption = generate_caption(p_state['image'])
             next_state, reward, terminated, truncated, info = env.step(action)
-            
+
+            #**************Test**************
+            r_obs = next_state[:-10].reshape((5,5,3))
+            # test = preprocess_observation(r_obs)
+
+            partial_view = env.render_partial_view_from_features(env.obs['image'], env.obs['direction'], tile_size=32)
             # c_frame = cv2.cvtColor(next_state['image'], cv2.COLOR_BGR2RGB)
             # cv2.imwrite("frame.png", c_frame)
             
-            next_state = np.transpose(next_state['image'], (2, 0, 1))
+            # next_state = env.get_unprocesed_obs()
             # c_state = env.get_unprocesed_obs()
             
             # vae_outputs = vae(torch.tensor(next_state/255).to(device).float())
@@ -346,10 +350,10 @@ def main(arg: DictConfig) -> None:
     os.makedirs(data_dir, exist_ok=True)
     
     if env_name == "SimplePickup":
-        from env.env import SimplePickup #TransitionCaptioner
-        env = SimplePickup(max_steps=max_steps, agent_view_size=5, size=7)
-        from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
-        env = RGBImgPartialObsWrapper(env)
+        from env.env import MultiObjectMiniGridEnv #TransitionCaptioner
+        env = MultiObjectMiniGridEnv(max_steps=max_steps, agent_view_size=5, size=7)
+        # from minigrid.wrappers import RGBImgObsWrapper, RGBImgPartialObsWrapper
+        # env = RGBImgPartialObsWrapper(env)
         # transition_captioner = 
     
     # Collect data
