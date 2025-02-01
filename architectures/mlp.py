@@ -23,6 +23,24 @@ def init_layer_uniform(layer, init_w=3e-3, init_b=0.1):
 
     return layer
 
+def init_layer_orthogonal(layer, gain=torch.sqrt(torch.tensor(2.0))):
+    """
+    Initialize a linear layer with orthogonal initialization.
+    
+    Args:
+        layer (nn.Linear): The layer to initialize.
+        gain (float): Scaling factor (default=1.0, use sqrt(2) for ReLU).
+    
+    Returns:
+        nn.Linear: The layer with orthogonal weights.
+    """
+    if isinstance(layer, nn.Linear):
+        nn.init.orthogonal_(layer.weight, gain=gain)  # Orthogonal init
+        if layer.bias is not None:
+            nn.init.zeros_(layer.bias)  # Initialize bias to zero
+    return layer
+
+
 
 class MLP(nn.Module):
     """
@@ -139,7 +157,7 @@ class Linear(nn.Module):
 
         self.linear_layer = nn.Linear(in_dim, out_dim)
         self.batch_norm = nn.BatchNorm1d(out_dim)
-        nn.init.xavier_uniform_(self.linear_layer.weight)
+        nn.init.orthogonal_(self.linear_layer.weight)
         self.dropout_layer = nn.Dropout(dropout_prob)
         self.post_activation = post_activation
 

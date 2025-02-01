@@ -52,19 +52,17 @@ def main(args: DictConfig) -> None:
     # Initialize dataset and dataloader
     #Loading the dataset
     datasets = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/data.pkl')
+    print("Total number of data: ", len(datasets))
     # datasets = [i/255 for i in datasets]
     # captions = get_data(f'{args.P_VAE_General.datapath}/{args.P_VAE_General.env}/captions.pkl')
     class_probs = get_data(f'{args.M2_General.datapath}/{args.M2_General.env}/class_prob.pkl')
     
-    unlabelled_data, labelled_data, unused_labels, labels = train_test_split(datasets, class_probs, test_size=0.20, random_state=42)
+    unlabelled_data, labelled_data, unused_labels, labels = train_test_split(datasets, class_probs, test_size=args.M2_General.human_label_ratio, random_state=42)
     print("Number of labelled data: ", len(labelled_data))
-    
+    print("Labelled data ratio: ", args.M2_General.human_label_ratio)
     #Create a model dump directory
     model_dir = create_dump_directory("models/m2_vae")
     print("Dump dir: ", model_dir)
-    
-    # alpha = 0.1 * len(unlabelled_data) / len(labelled_data)
-    alpha = 100
     
     unlabelled_data = TwoListDataset(unlabelled_data, unused_labels)
     labelled_data = TwoListDataset(labelled_data, labels)
@@ -88,7 +86,7 @@ def main(args: DictConfig) -> None:
     wandb.config.update(OmegaConf.to_container(args, resolve=True))
     epoch_bar = tqdm(range(args.M2_Network.epochs), desc="Training Progress", unit="epoch")
     for epoch in epoch_bar:
-        total_loss, accuracy_labeled, accuracy_unlabeled, mi_losses = (0, 0, 0, 0)
+        total_loss, accuracy_labeled, accuracy_unlabeled, hsic_losses = (0, 0, 0, 0)
         classification_losses, reconstruction_errors, z_kl_losses, u_kl_losses, wessestein_losses  = 0, 0, 0, 0, 0 
         L_losses, U_losses = 0, 0
         iter = 0
@@ -97,14 +95,14 @@ def main(args: DictConfig) -> None:
 
             x_reconstructed, x_z, x_z_mu, x_z_log_var, x_c_logits, x_c = model(x)
             # kl_divergence_weight = anneal_coefficient(epoch, args.M2_Network.epochs, args.M2_Network.kl_weight_start, args.M2_Network.kl_weight_end, 150, True)
-            kl_divergence_weight = 0.01
+            kl_divergence_weight = 0.02
             # wessestein_weight = anneal_coefficient(epoch, args.M2_Network.epochs, 0.1, 1, 100, True)
             wessestein_weight = 1
             total_loss_L, cls_loss= model.L(x, x_reconstructed, x_z_mu, x_z_log_var, y, x_c_logits, x_c, wessestein_weight, kl_weight=kl_divergence_weight)
             # L = model.L(x, y, labelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
             
             u_reconstructed, u_z, u_z_mu, u_z_log_var, u_c_logits, u_c = model(u)
-            total_loss_U, recon_loss, kl_z, kl_c, w_loss = model.U(u, u_reconstructed, u_z_mu, u_z_log_var, u_c_logits, u_c, wessestein_weight, kl_weight=kl_divergence_weight)
+            total_loss_U, recon_loss, kl_z, kl_c, w_loss, hsic_loss = model.U(u, u_reconstructed, u_z_mu, u_z_log_var, u_c_logits, u_c, wessestein_weight, kl_weight=kl_divergence_weight)
             # reconstruction_error, kl_loss, U = model.U(u, y_pred_unlabelled, unlabelled_reconstruction, mu, log_var, args.M2_Network.kl_weight)
 
             # Freeze MINE network parameters
@@ -158,6 +156,8 @@ def main(args: DictConfig) -> None:
             
             # #Linearly descrese the alpha
             # alpha = anneal_coefficient(epoch, args.M2_Network.epochs, 500, 50, 200, False)
+
+            #Forcing the weights of the z encoder and the c_encdoer to be orthogonal
             J_alpha = total_loss_L + total_loss_U #+ 0.1*(mi_estimate ** 2)
             optimizer.zero_grad()
             J_alpha.backward()
@@ -195,7 +195,7 @@ def main(args: DictConfig) -> None:
             u_kl_losses+= kl_c.item()
             L_losses += total_loss_L.item()
             U_losses += total_loss_U.item()
-            # mi_losses += mi_estimate.item()
+            hsic_losses += hsic_loss.item()
             wessestein_losses += w_loss.item()
             
             # # Mask to identify rows where the target is not [0.5, 0.5]
@@ -221,7 +221,7 @@ def main(args: DictConfig) -> None:
                    "L loss" : L_losses/len(unlabelled_data_loader),
                    "U loss" : U_losses/len(unlabelled_data_loader),
                    "Wessestein loss" : wessestein_losses/len(unlabelled_data_loader),
-                #    "Mutual info" : mi_losses/len(unlabelled_data_loader),
+                   "HSIC Loss" : hsic_losses/len(unlabelled_data_loader),
                    "Accuracy" : accuracy_labeled/len(unlabelled_data_loader),
                    "Unlabelled Accuracy" : accuracy_unlabeled/len(unlabelled_data_loader),
                    "Current Learning rate" : optimizer.param_groups[0]['lr'],

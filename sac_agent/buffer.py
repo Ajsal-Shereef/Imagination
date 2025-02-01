@@ -19,11 +19,11 @@ class ReplayBuffer:
         self.device = device
         self.memory = deque(maxlen=buffer_size)  
         self.batch_size = batch_size
-        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done"])
+        self.experience = namedtuple("Experience", field_names=["state", "action", "reward", "next_state", "done", "class_prob"])
     
-    def add(self, state, action, reward, next_state, done):
+    def add(self, state, action, reward, next_state, done, class_prob):
         """Add a new experience to memory."""
-        e = self.experience(state, action, reward, next_state, done)
+        e = self.experience(state, action, reward, next_state, done, class_prob)
         self.memory.append(e)
     
     def sample(self):
@@ -37,6 +37,18 @@ class ReplayBuffer:
         dones = torch.from_numpy(np.vstack([e.done for e in experiences if e is not None]).astype(np.uint8)).float().to(self.device)
   
         return (states, actions, rewards, next_states, dones)
+    
+    def dump_data(self, dir):
+        states = [exp.next_state for exp in self.memory]
+        class_probs = [exp.class_prob for exp in self.memory]
+        data_path = os.path.join(dir, 'data.pkl')
+        with open(data_path, 'wb') as f:
+            pickle.dump(states, f)
+        print(f"Collected {len(states)} transitions and saved to {data_path}")
+        data_path = os.path.join(dir, 'class_prob.pkl')
+        with open(data_path, 'wb') as f:
+            pickle.dump(class_probs, f)
+        print(f"Collected {len(class_probs)} transitions and saved to {data_path}")
 
     def __len__(self):
         """Return the current size of internal memory."""

@@ -52,21 +52,6 @@ class FeatureEncoder(nn.Module):
         
     def forward(self, x):
         return self.feature_encoder(x)
-    
-# class FiLMLayer(nn.Module):
-#     def __init__(self, input_dim, feature_dim):
-#         super(FiLMLayer, self).__init__()
-#         self.gamma = nn.Linear(input_dim, feature_dim)
-#         self.beta = nn.Linear(input_dim, feature_dim)
-
-#     def forward(self, x, y):
-#         gamma = self.gamma(y)
-#         beta = self.beta(y)
-#         return gamma.view(-1, 1, 1, 1) * x + beta.view(-1, 1, 1, 1)
-
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
 class FiLMLayer(nn.Module):
     def __init__(self, num_features, c_dim):
@@ -91,6 +76,19 @@ class FiLMLayer(nn.Module):
         shift = self.shift_fc(c)  # Compute shift (beta) parameters
         # Apply FiLM modulation
         return x * scale + shift
+    
+class AdaIN(nn.Module):
+    def __init__(self, feature_dim, latent_dim):
+        super().__init__()
+        self.fc = nn.Linear(latent_dim, 2 * feature_dim)  # γ and β
+
+    def forward(self, z, c):
+        # x: (B, C, ...), s: (B, latent_dim)
+        gamma_beta = self.fc(c)  # (B, 2*C)
+        gamma, beta = gamma_beta.chunk(2, dim=1)
+        # Normalize x and apply γ/β
+        z = (z - z.mean(dim=[0,1], keepdim=True)) / z.std(dim=[0,1], keepdim=True)
+        return gamma * z + beta
 
 class Decoder(nn.Module):
     def __init__(self, dims):
@@ -111,25 +109,26 @@ class Decoder(nn.Module):
         self.y_dim = y_dim
         self.x_dim = x_dim
 
-        self.fc1 = Linear(z_dim, 256)
-        self.film1 = FiLMLayer(256, y_dim)
-        self.fc2 = Linear(256, 128)
-        self.film2 = FiLMLayer(128, y_dim)
-        self.fc3 = Linear(128, x_dim)
+        self.fc1 = Linear(z_dim + y_dim, 512)
+        self.film1 = AdaIN(512, y_dim)
+        self.fc2 = Linear(512, 256)
+        self.film2 = AdaIN(256, y_dim)
+        self.fc3 = Linear(256, x_dim)
 
         # Activation functions
         self.leaky_relu = nn.LeakyReLU()
         # self.sigmoid = nn.Sigmoid()
-        self.relu = nn.ReLU()
+        # self.relu = nn.ReLU()
 
     def forward(self, z, y):
-        x = self.fc1(z)
+        input = torch.cat([z, y], dim=-1)
+        x = self.fc1(input)
         x = self.leaky_relu(x)
         x = self.film1(x,y)
         x = self.fc2(x)
         x = self.leaky_relu(x)
         x = self.film2(x,y)
-        x = self.relu(self.fc3(x)) # Output shape: [batch_size, x_dim, 40, 40]
+        x = self.leaky_relu(self.fc3(x)) # Output shape: [batch_size, x_dim, 40, 40]
         return x
 
 # class Decoder(nn.Module):

@@ -134,13 +134,13 @@ def calculate_probabilities(agent_position, observation, agent_direction, purple
     #     print("Overlap with Green ball")
     
     if 'purple key' in object and 'green ball' in object:
-        probabilities = np.array([0,0,1])
+        probabilities = np.array([0,0,1,0])
     elif 'purple key' in object:
-        probabilities = np.array([1,0,0])
+        probabilities = np.array([1,0,0,0])
     elif 'green ball' in object:
-        probabilities = np.array([0,1,0])
+        probabilities = np.array([0,1,0,0])
     else:
-        probabilities = np.array([0,0,1])
+        probabilities = np.array([0,0,0,1])
         
     return probabilities
 

@@ -4,6 +4,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 from torch.nn import init
+import torch.linalg as linalg
 from geomloss import SamplesLoss
 from torch.nn.utils import spectral_norm
 from architectures.mlp import MLP, Linear
@@ -118,11 +119,13 @@ class DeepGenerativeModel(nn.Module):
         Initialise a new generative model
         :param dims: dimensions of x, y, z and hidden layers.
         """
-        [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden, encoder_hidden_layers] = dims
+        [self.x_dim, self.y_dim, self.h_dim, self.z_dim, self.classifier_hidden, self.encoder_hidden_layers] = dims
         self.label_weight = label_weight
         self.recon_weight = recon_weight
         super(DeepGenerativeModel, self).__init__()
-        self.encoder = FeatureEncoder([self.x_dim, self.h_dim, encoder_hidden_layers])
+        self.z_encoder = FeatureEncoder([self.x_dim, self.h_dim, self.encoder_hidden_layers])
+        self.c_encoder = FeatureEncoder([self.x_dim, self.h_dim, self.encoder_hidden_layers])
+        self.init_orthogonal_weight()
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
         self.decoder = Decoder([self.z_dim, self.y_dim, self.x_dim])
         # self.classifier = GaussianSample(self.h_dim, self.z_dim)
@@ -139,15 +142,38 @@ class DeepGenerativeModel(nn.Module):
         self.register_buffer('c_prior_logvar', torch.zeros(self.z_dim))  # Log variance of 0
         
         self.reconstruction_loss_function = nn.BCELoss(reduction='none')
-        self.label_loss_function = nn.CrossEntropyLoss()
+        self.uniform_label_loss_function = nn.CrossEntropyLoss()
+
+        self.temp = nn.Parameter(torch.tensor(0.1))
+
+    def init_orthogonal_weight(self):
+        for (name1, param1), (name2, param2) in zip(self.z_encoder.named_parameters(), self.c_encoder.named_parameters()):
+            # Orthogonalize param2 with respect to param1
+            orthogonalized_weight = self.get_orthogonal_weights(param1.data, param2.data)
+            param2.data.copy_(orthogonalized_weight)  # Correctly copy the data into param2
+
+    def get_orthogonal_weights(self, W1, W2):
+        # Initialize first part with an orthogonal matrix
+        w1_flat = W1.view(-1)
+        w2_flat = W2.view(-1)
+        # Compute projection of w2 onto w1
+        dot_product = torch.dot(w2_flat, w1_flat)
+        norm_sq = torch.dot(w1_flat, w1_flat)
+        projection = (dot_product / norm_sq) * w1_flat
+        # Subtract the projection from w2 to make it orthogonal to w1
+        w2_orth_flat = w2_flat - projection
+        # Reshape back to the original weight shape
+        w2_orth = w2_orth_flat.view_as(W2)
+        return w2_orth
 
 
     def forward(self, x):
         # Add label and data and generate latent variable
-        h = self.encoder(x)
-        z_latent, z_mu, z_log_var = self.z_latent(h)
-        c_logits = self.classify(h) 
-        c = sample_gumbel_softmax(c_logits, self.training)
+        z_h = self.z_encoder(x)
+        c_h = self.z_encoder(x)
+        z_latent, z_mu, z_log_var = self.z_latent(z_h)
+        c_logits = self.classify(c_h) 
+        c = sample_gumbel_softmax(c_logits, self.training, self.temp)
         # Reconstruct data point from latent data and label
         # if y is not None:
         #     x_reconstructed = self.decoder(z_latent, y)
@@ -176,8 +202,8 @@ class DeepGenerativeModel(nn.Module):
         Returns:
             x_generated: Generated images (B, 3, 40, 40)
         """
-        h = self.encoder(x_input)
-        z, mu, logvar = self.z_latent(h)
+        z_h = self.z_encoder(x_input)
+        z, mu, logvar = self.z_latent(z_h)
         if use_mean_z:
             z = mu  # Use mean of q(z|x)
         x_generated = self.decoder(z, c_cond)
@@ -257,6 +283,43 @@ class DeepGenerativeModel(nn.Module):
         kl = kl_per_sample.mean()
         return kl
     
+    def rbf_kernel(self, x, sigma=None):
+        # x: (batch_size, dim)
+        pairwise_dist = torch.cdist(x, x) ** 2  # (batch_size, batch_size)
+
+        if sigma is None:
+            # Median heuristic for sigma
+            sigma = torch.sqrt(0.5 * torch.median(pairwise_dist))
+            sigma = sigma.clamp(min=1e-4)  # Avoid σ ≈ 0
+
+        return torch.exp(-pairwise_dist / (2 * sigma**2 + 1e-8))
+    
+    def linear_kernel(self, x):
+        # For categorical variables (Gumbel-Softmax outputs)
+        return x @ x.T
+
+    def hsic(self, z, c, sigma_z=None):
+        # z: (batch_size, z_dim), continuous
+        # c: (batch_size, c_dim), categorical probabilities from Gumbel-Softmax
+
+        batch_size = z.size(0)
+        H = torch.eye(batch_size) - (1.0 / batch_size) * torch.ones(batch_size, batch_size)
+        H = H.to(z.device)
+
+        # z = (z - z.mean(0)) / (z.std(0) + 1e-8)  # Normalize z
+        # c = (c - c.mean(0)) / (c.std(0) + 1e-8)  # Normalize c
+
+        # Compute kernel matrices
+        K_z = self.rbf_kernel(z, sigma_z)
+        K_c = self.linear_kernel(c)  # Treat c as continuous probabilities
+
+        # Center kernel matrices
+        K_z = H @ K_z @ H
+        K_c = H @ K_c @ H
+
+        # HSIC value
+        return torch.trace(K_z @ K_c) / ((batch_size - 1) ** 2 + 1e-8)
+    
     def L(self, x, x_recon, mu_z, logvar_z, y, logits_c, x_c, ws_weight, kl_weight):
         #Reconstruction loss
         recon_loss = F.mse_loss(x_recon, x, reduction='none')
@@ -265,11 +328,16 @@ class DeepGenerativeModel(nn.Module):
         kl_z = self.kl_divergence_z(mu_z, logvar_z)
         # KL divergence for c
         kl_c = self.kl_divergence_c(logits_c)
-        label_loss = self.label_loss_function(logits_c, y)
+
+        #calculating the class count for weighted loss
+        class_counts = torch.bincount(torch.argmax(y, dim=1), minlength=4)
+        weights = 1.0 / (class_counts + 1e-6)  # Inverse frequency
+        weights = weights / weights.sum()
+        label_loss = F.cross_entropy(logits_c, y, weight=weights)
         
         #Cycle consistency loss
         _, _, z_mu, _, c_logits, _ = self.forward(x_recon)
-        x_reconstructed_label_loss = self.label_loss_function(c_logits, y)
+        x_reconstructed_label_loss = F.cross_entropy(c_logits, y, weight=weights)
         x_reconstructed_z_loss = F.mse_loss(z_mu, mu_z)
         cycle_loss = x_reconstructed_z_loss + x_reconstructed_label_loss
 
@@ -279,18 +347,25 @@ class DeepGenerativeModel(nn.Module):
         generated_images = self.generate(x, labels.to(device).float())
         _, _, z_mu, _, gen_logits, _ = self.forward(generated_images)
         aux_reconstruction_loss = F.mse_loss(z_mu, mu_z)
-        aux_classification_loss = self.label_loss_function(gen_logits, labels.to(device).float())
-        aux_loss = aux_reconstruction_loss + aux_classification_loss
+        aux_classification_loss = self.uniform_label_loss_function(gen_logits, labels.to(device).float())
+        aux_proximity_loss = F.mse_loss(generated_images, x)
+        aux_loss = aux_reconstruction_loss + aux_classification_loss + aux_proximity_loss
+
+        #Hilbert-Schmidit Independence criterion
+        hsic_loss = self.hsic(z_mu, x_c)
         
         # Mutual information loss to disentagle z and c
         # mi_loss = self.mi_loss(mu_z, x_c)
         # mi_loss = 0
 
         # Wasserstein loss
-        wasserstein_loss = self.sliced_wasserstein_distance(x, x_recon)
+        wasserstein_loss = self.sliced_wasserstein_distance(x, generated_images)
         # wasserstein_loss = 0
         
-        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + self.label_weight*label_loss + cycle_loss + ws_weight*wasserstein_loss + aux_loss
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + kl_weight*kl_c + self.label_weight*label_loss + \
+            cycle_loss + ws_weight*wasserstein_loss + aux_loss + hsic_loss
+        if torch.isnan(total_loss):
+            raise ValueError ("Loss is nan")
         return total_loss, label_loss
     
     def U(self, x, x_recon, mu_z, logvar_z, logits_c, x_c, ws_weight, kl_weight):
@@ -304,7 +379,7 @@ class DeepGenerativeModel(nn.Module):
         
         #Self supervised label loss
         _, _, z_mu, _, recon_logit, _ = self.forward(x_recon)
-        reconstructed_label_loss = self.label_loss_function(recon_logit, torch.argmax(logits_c, dim=-1))
+        reconstructed_label_loss = self.uniform_label_loss_function(recon_logit, torch.argmax(logits_c, dim=-1))
         x_reconstructed_z_loss = F.mse_loss(z_mu, mu_z)
         cycle_loss = x_reconstructed_z_loss + reconstructed_label_loss
         
@@ -312,21 +387,27 @@ class DeepGenerativeModel(nn.Module):
         # mi_loss = self.mi_loss(mu_z, x_c)
         # mi_loss = 0
 
-        # Wasserstein loss
-        wasserstein_loss = self.sliced_wasserstein_distance(x, x_recon)
-        # wasserstein_loss = 0
-
         #Creating some auxiliary losses
         # Generate random labels
         labels = F.one_hot(torch.randint(0, self.y_dim, (x_recon.shape[0],)), num_classes=self.y_dim)
         generated_images = self.generate(x, labels.to(device).float())
         _, _, z_mu, _, gen_logits, _ = self.forward(generated_images)
         aux_reconstruction_loss = F.mse_loss(z_mu, mu_z)
-        aux_classification_loss = self.label_loss_function(gen_logits, labels.to(device).float())
-        aux_loss = aux_reconstruction_loss + aux_classification_loss
+        aux_classification_loss = self.uniform_label_loss_function(gen_logits, labels.to(device).float())
+        aux_proximity_loss = F.mse_loss(generated_images, x)
+        aux_loss = aux_reconstruction_loss + aux_classification_loss + aux_proximity_loss
+
+        #Hilbert-Schmidit Independence criterion
+        hsic_loss = self.hsic(z_mu, x_c)
+
+        # Wasserstein loss
+        wasserstein_loss = self.sliced_wasserstein_distance(x, generated_images)
+        # wasserstein_loss = 0
         
-        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + 0.01*kl_c + cycle_loss + ws_weight*wasserstein_loss + aux_loss
-        return total_loss, recon_loss, kl_z, kl_c, wasserstein_loss
+        total_loss = self.recon_weight*recon_loss + kl_weight*kl_z + kl_weight*kl_c + cycle_loss + ws_weight*wasserstein_loss + aux_loss + hsic_loss
+        if torch.isnan(total_loss):
+            raise ValueError ("Loss is nan")
+        return total_loss, recon_loss, kl_z, kl_c, wasserstein_loss, hsic_loss
     
     def sliced_wasserstein_distance(self, real_samples, generated_samples, num_projections=100, device='cuda'):
         # Flatten the samples

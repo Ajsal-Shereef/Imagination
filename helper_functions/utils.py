@@ -13,6 +13,7 @@ from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
 from torch.utils.data import Dataset
 from torch.autograd import Variable
+from env.env import calculate_probabilities
 
 def visualize_latent_space(model, dataloader, device, all_z=[], all_labels=[], method='pca', save_path='', checkpoint=''):
     """
@@ -242,9 +243,14 @@ def collect_random(env, dataset, num_samples=200):
     for _ in range(num_samples):
         action = env.action_space.sample()
         next_state, reward, truncated, terminated, _ = env.step(action)
-        # next_state = np.transpose(next_state['image'], (2, 0, 1))/255
+
+        class_prob = calculate_probabilities(env.agent_pos, 
+                                             env.unwrapped.obs['image'], 
+                                             env.agent_dir, 
+                                             env.purple_key_loc, 
+                                             env.green_ball_loc)        # next_state = np.transpose(next_state['image'], (2, 0, 1))/255
         done = truncated + terminated
-        dataset.add(state, action, reward, next_state, done)
+        dataset.add(state, action, reward, next_state, done, class_prob)
         state = next_state
         if done:
             state, info = env.reset()

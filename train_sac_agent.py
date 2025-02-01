@@ -7,16 +7,15 @@ from collections import deque
 from helper_functions.utils import *
 import random
 from sac_agent.agent import SAC
-from sac_agent.buffer import StateCaptionEncodeBuffer
-from sentence_transformers import SentenceTransformer
+from env.env import calculate_probabilities
 
 def get_config():
     parser = argparse.ArgumentParser(description='RL')
     parser.add_argument("--run_name", type=str, default="Training SAC agents", help="Run name, default: SAC")
     parser.add_argument("--env", type=str, default="SimplePickup", help="Gym environment name, default: CartPole-v0")
-    parser.add_argument("--episodes", type=int, default=10000, help="Number of episodes, default: 100")
+    parser.add_argument("--episodes", type=int, default=7300, help="Number of episodes, default: 100")
     parser.add_argument("--max_ep_len", type=int, default=20, help="Number of timestep within an episode")
-    parser.add_argument("--buffer_size", type=int, default=1000_00, help="Maximal training dataset size, default: 100_000")
+    parser.add_argument("--buffer_size", type=int, default=1500_00, help="Maximal training dataset size, default: 100_000")
     parser.add_argument("--seed", type=int, default=1, help="Seed, default: 1")
     parser.add_argument("--save_every", type=int, default=5000, help="Saves the network every x epochs, default: 25")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size, default: 256")
@@ -79,6 +78,11 @@ def train(config):
                 # p_state = env.get_unprocesed_obs()
                 # p_agent_loc = env.agent_pos
                 next_state, reward, terminated, truncated, _ = env.step(action)
+                class_prob = calculate_probabilities(env.agent_pos, 
+                                                     env.unwrapped.obs['image'], 
+                                                     env.agent_dir, 
+                                                     env.purple_key_loc, 
+                                                     env.green_ball_loc)
                 # next_state = np.transpose(next_state['image'], (2, 0, 1))/255
                 # c_state = env.get_unprocesed_obs()
                 # c_agent_loc = env.agent_pos
@@ -96,7 +100,7 @@ def train(config):
                 # cv2.imwrite("frame.png", c_frame)
                 # caption_encoding = sentencebert.encode(transition_caption, convert_to_tensor=True, device=device)
                 done = terminated + truncated
-                sac_agent.buffer.add(state, action, reward, next_state, done)
+                sac_agent.buffer.add(state, action, reward, next_state, done, class_prob)
                 policy_loss, alpha_loss, bellmann_error1, bellmann_error2, current_alpha = sac_agent.learn(steps, 
                                                                                                            sac_agent.buffer.sample(),
                                                                                                            gamma=0.99)
@@ -112,6 +116,7 @@ def train(config):
             #print("Episode: {} | Reward: {} | Polciy Loss: {} | Steps: {}".format(i, rewards, policy_loss, steps,))
             wandb.log({"Reward": rewards,
                        "Average": np.mean(average),
+                       "Episode steps" : episode_steps,
                        "Steps": total_steps,
                        "Policy Loss": policy_loss,
                        "Alpha Loss": alpha_loss,
@@ -132,6 +137,7 @@ def train(config):
                 sac_agent.save("models/sac_agent", save_name="SAC_discrete")
         #Saving the model
         sac_agent.save("models/sac_agent", save_name="SAC_discrete")
+        sac_agent.buffer.dump_data("data/SimplePickup")
         #Saving the trajectory data
         # statecaption_buffer.dump_buffer_data(f"data/{config.env}")       
         #Testing the training

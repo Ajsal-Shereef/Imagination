@@ -5,7 +5,7 @@ Imagination_General:
   max_ep_len : 20
   encoder_model : "all-MiniLM-L12-v2"
   datapath : "data"
-  vae_checkpoint : "models/m2_vae/2025-01-29_18-15-21_QA284N/model.pt"
+  vae_checkpoint : "models/m2_vae/2025-02-01_19-12-11_RRVZTB/model.pt"
   sentece_encoder_model : "models/captioner.pth"
   buffer_size : 3000_00
   agent : 'sac'

@@ -18,7 +18,7 @@ from sentence_transformers import SentenceTransformer
 from imagination.imagination_net import ImaginationNet
 from architectures.m2_vae.dgm import DeepGenerativeModel
 
-is_agent = True
+is_agent = False
 
 @hydra.main(version_base=None, config_path="config", config_name="master_config")
 def main(args: DictConfig) -> None:
@@ -115,10 +115,10 @@ def main(args: DictConfig) -> None:
             else:
                 with torch.no_grad():
                     x = torch.tensor(state).to(device).float()
-                    imagined_state = model.generate(x.unsqueeze(0), torch.tensor([0, 1, 0]).to(device).float())
+                    imagined_state = model.generate(x.unsqueeze(0), torch.tensor([0, 1, 0, 0]).unsqueeze(0).to(device).float())
                     action = agent.get_action(imagined_state.squeeze())
                     imagined_state = np.round(imagined_state.squeeze().detach().cpu().numpy())
-                    r_obs_gen = imagined_state[:-10].reshape((5,5,3))
+                    r_obs_gen = np.clip(imagined_state[:-10], 0, 5).reshape((5,5,3))
                     partial_view_gen = env.render_partial_view_from_features(r_obs_gen, np.argmax(imagined_state[-10:-6]), tile_size=32)
                     r_obs = state[:-10].reshape((5,5,3))
                     partial_view = env.render_partial_view_from_features(r_obs, np.argmax(state[-10:-6]), tile_size=32)
@@ -141,3 +141,4 @@ def main(args: DictConfig) -> None:
         write_video(partial_view_array, f'{str(i)}_partial_view', f'{video_dir}/Partial_view', (320,160))    
 if __name__ == "__main__":
     main()
+    
