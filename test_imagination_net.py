@@ -115,7 +115,9 @@ def main(args: DictConfig) -> None:
             else:
                 with torch.no_grad():
                     x = torch.tensor(state).to(device).float()
-                    imagined_state = model.generate(x.unsqueeze(0), torch.tensor([0, 1, 0, 0]).unsqueeze(0).to(device).float())
+                    # imagined_state = model.generate(x.unsqueeze(0), torch.tensor([0, 1, 0]).unsqueeze(0).to(device).float())
+                    # imagined_state = model(x.unsqueeze(0))
+                    # imagined_state  = imagined_state[0]
                     action = agent.get_action(imagined_state.squeeze())
                     imagined_state = np.round(imagined_state.squeeze().detach().cpu().numpy())
                     r_obs_gen = np.clip(imagined_state[:-10], 0, 5).reshape((5,5,3))

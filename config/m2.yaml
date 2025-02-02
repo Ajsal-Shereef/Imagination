@@ -3,7 +3,7 @@ M2_General:
   agent_view_size : 3
   load_model_path : 'models/'
   datapath : "data"
-  y_dim : 4
+  y_dim : 3
   human_label_ratio : 0.20
 M2_Network:
   input_dim : 85
@@ -18,5 +18,5 @@ M2_Network:
   kl_weight_start : 0.01
   kl_weight_end : 0.05
   save_freequency : 100
-  label_loss_weight : 1
+  label_loss_weight : 10
   recon_loss_weight : 1

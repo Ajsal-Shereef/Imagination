@@ -110,9 +110,9 @@ class Decoder(nn.Module):
         self.x_dim = x_dim
 
         self.fc1 = Linear(z_dim + y_dim, 512)
-        self.film1 = AdaIN(512, y_dim)
+        self.film1 = FiLMLayer(512, y_dim)
         self.fc2 = Linear(512, 256)
-        self.film2 = AdaIN(256, y_dim)
+        self.film2 = FiLMLayer(256, y_dim)
         self.fc3 = Linear(256, x_dim)
 
         # Activation functions

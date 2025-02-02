@@ -274,7 +274,7 @@ def test(env, agent, save_dir, n_episode=5):
         score = 0
         episode_step = 0
         while not done:
-            action = agent.get_action(np.transpose(state['image'], (2, 0, 1))/255)
+            action = agent.get_action(state)
             next_state, reward, terminated, truncated, info = env.step(action)
             done = terminated + truncated
             frame = env.get_frame()

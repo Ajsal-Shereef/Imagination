@@ -125,7 +125,7 @@ class DeepGenerativeModel(nn.Module):
         super(DeepGenerativeModel, self).__init__()
         self.z_encoder = FeatureEncoder([self.x_dim, self.h_dim, self.encoder_hidden_layers])
         self.c_encoder = FeatureEncoder([self.x_dim, self.h_dim, self.encoder_hidden_layers])
-        self.init_orthogonal_weight()
+        # self.init_orthogonal_weight()
         self.z_latent = GaussianSample(self.h_dim, self.z_dim)
         self.decoder = Decoder([self.z_dim, self.y_dim, self.x_dim])
         # self.classifier = GaussianSample(self.h_dim, self.z_dim)
@@ -149,13 +149,14 @@ class DeepGenerativeModel(nn.Module):
     def init_orthogonal_weight(self):
         for (name1, param1), (name2, param2) in zip(self.z_encoder.named_parameters(), self.c_encoder.named_parameters()):
             # Orthogonalize param2 with respect to param1
-            orthogonalized_weight = self.get_orthogonal_weights(param1.data, param2.data)
-            param2.data.copy_(orthogonalized_weight)  # Correctly copy the data into param2
+            if "weight" in name1:
+                orthogonalized_weight = self.get_orthogonal_weights(param1.data, param2.data)
+                param2.data.copy_(orthogonalized_weight)  # Correctly copy the data into param2
 
     def get_orthogonal_weights(self, W1, W2):
         # Initialize first part with an orthogonal matrix
         w1_flat = W1.view(-1)
-        w2_flat = W2.view(-1)
+        w2_flat = torch.rand_like(w1_flat)
         # Compute projection of w2 onto w1
         dot_product = torch.dot(w2_flat, w1_flat)
         norm_sq = torch.dot(w1_flat, w1_flat)
@@ -170,7 +171,7 @@ class DeepGenerativeModel(nn.Module):
     def forward(self, x):
         # Add label and data and generate latent variable
         z_h = self.z_encoder(x)
-        c_h = self.z_encoder(x)
+        c_h = self.c_encoder(x)
         z_latent, z_mu, z_log_var = self.z_latent(z_h)
         c_logits = self.classify(c_h) 
         c = sample_gumbel_softmax(c_logits, self.training, self.temp)
@@ -330,7 +331,7 @@ class DeepGenerativeModel(nn.Module):
         kl_c = self.kl_divergence_c(logits_c)
 
         #calculating the class count for weighted loss
-        class_counts = torch.bincount(torch.argmax(y, dim=1), minlength=4)
+        class_counts = torch.bincount(torch.argmax(y, dim=1), minlength=3)
         weights = 1.0 / (class_counts + 1e-6)  # Inverse frequency
         weights = weights / weights.sum()
         label_loss = F.cross_entropy(logits_c, y, weight=weights)
